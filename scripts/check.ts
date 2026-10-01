@@ -72,6 +72,22 @@ await assert.rejects(solve({ ...base, outputs: [{ item: 'Desc_IronPlate_C', rate
   assert.ok(l.nodes.every((n) => Number.isFinite(n.x + n.y + n.w + n.h)), 'layout positions');
   assert.ok(l.segs.every((g) => Number.isFinite(g.len)), 'segment lengths');
   assert.ok(layout(p, s, 'LR').segs.every((g) => Number.isFinite(g.len)), 'LR segment lengths');
+  // links between groups: few bends, never through another group
+  for (const dir of ['TB', 'LR'] as const) {
+    const L = layout(p, s, dir);
+    for (const sg of L.segs.filter((x) => x.edge)) {
+      const [from, rest] = sg.edge!.split('>');
+      const to = rest.slice(0, rest.lastIndexOf(':'));
+      assert.ok(sg.pts.length - 2 <= 4, `${dir} ${sg.edge}: ${sg.pts.length - 2} bends`);
+      for (const n of L.nodes.filter((n) => n.group.id !== from && n.group.id !== to)) {
+        for (let i = 1; i < sg.pts.length; i++) {
+          const [a, b] = [sg.pts[i - 1], sg.pts[i]];
+          const inside = Math.max(a.x, b.x) > n.x && Math.min(a.x, b.x) < n.x + n.w && Math.max(a.y, b.y) > n.y && Math.min(a.y, b.y) < n.y + n.h;
+          assert.ok(!inside, `${dir} ${sg.edge} crosses ${n.group.label}`);
+        }
+      }
+    }
+  }
   console.log('HMF with all alts:', p.groups.length, 'groups,', p.power.toFixed(0), 'MW');
 }
 console.log('all checks passed');

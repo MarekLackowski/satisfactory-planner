@@ -179,6 +179,87 @@ function inner(n: NodeBox, dir: Dir, s: Settings, segs: Segment[], rin: number[]
   g.outputs.forEach((f, j) => seg([busOut[j]!, [A - PAD - rout[j] * L - L / 2, bOut]], f.item, f.rate));
 }
 
+type Rect = { x: number; y: number; w: number; h: number };
+type Run = { at: number; from: number; to: number; item: string; half: number }; // straight belt run used by a link
+
+/** drop repeated and collinear points so a route has only real bends */
+function simplify(pts: Pt[]) {
+  const out: Pt[] = [];
+  for (const p of pts) {
+    if (out.length && out[out.length - 1].x === p.x && out[out.length - 1].y === p.y) continue;
+    const a = out[out.length - 2];
+    const b = out[out.length - 1];
+    if (a && ((a.x === b.x && b.x === p.x) || (a.y === b.y && b.y === p.y))) out.pop();
+    out.push(p);
+  }
+  return out;
+}
+
+/**
+ * Orthogonal link router, in a frame where the flow goes down (LR is transposed by the caller).
+ * Tries, in order: straight line, one horizontal jog (2 bends), a detour through a free column (4 bends).
+ * A route must not cross any group and must not run alongside a belt of another item.
+ */
+function route(a: Pt, b: Pt, half: number, item: string, blocks: Rect[], hRuns: Run[], vRuns: Run[], hints: number[]): Pt[] | null {
+  const M = 8; // clearance around groups
+  const overlap = (p1: number, p2: number, q1: number, q2: number) => Math.max(p1, p2) > Math.min(q1, q2) && Math.min(p1, p2) < Math.max(q1, q2);
+  const clash = (runs: Run[], at: number, f: number, t: number) =>
+    runs.some((r) => r.item !== item && Math.abs(r.at - at) < r.half + half + 4 && overlap(r.from, r.to, f, t));
+  const free = (pts: Pt[]) => {
+    for (let i = 1; i < pts.length; i++) {
+      const p = pts[i - 1];
+      const q = pts[i];
+      if (p.x === q.x) {
+        if (blocks.some((r) => p.x > r.x - M - half && p.x < r.x + r.w + M + half && overlap(p.y, q.y, r.y - M, r.y + r.h + M))) return false;
+        if (clash(vRuns, p.x, p.y, q.y)) return false;
+      } else {
+        if (blocks.some((r) => p.y > r.y - M - half && p.y < r.y + r.h + M + half && overlap(p.x, q.x, r.x - M, r.x + r.w + M))) return false;
+        if (clash(hRuns, p.y, p.x, q.x)) return false;
+      }
+    }
+    return true;
+  };
+  const y0 = a.y + STUB;
+  const y1 = b.y - STUB;
+  const step = 2 * half + 6;
+  // 0 bends
+  if (Math.abs(a.x - b.x) < 0.5 && y0 <= y1 && free([a, b])) return [a, { x: a.x, y: b.y }];
+  // 2 bends: horizontal jog at some height between the two groups, middle first
+  if (y0 <= y1) {
+    const mid = (y0 + y1) / 2;
+    for (let k = 0; k <= (y1 - y0) / step + 1; k++) {
+      for (const ym of k ? [mid - k * step, mid + k * step] : [mid]) {
+        if (ym < y0 || ym > y1) continue;
+        const p = [a, { x: a.x, y: ym }, { x: b.x, y: ym }, b];
+        if (free(p)) return p;
+      }
+    }
+  }
+  // 4 bends: leave downwards, run along a free column, come in from above
+  const cols = [...new Set([
+    ...hints, a.x, b.x,
+    ...blocks.flatMap((r) => [r.x - M - half - 6, r.x + r.w + M + half + 6]),
+  ])].filter((x) => Number.isFinite(x)).sort((p, q) => Math.abs(p - (a.x + b.x) / 2) - Math.abs(q - (a.x + b.x) / 2));
+  let best: Pt[] | null = null;
+  let bestLen = Infinity;
+  for (const xc of cols.slice(0, 16)) {
+    for (let i = 0; i < 4; i++) {
+      for (let j = 0; j < 4; j++) {
+        const ya = y0 + i * step;
+        const yb = y1 - j * step;
+        const p = [a, { x: a.x, y: ya }, { x: xc, y: ya }, { x: xc, y: yb }, { x: b.x, y: yb }, b];
+        const len = Math.abs(ya - a.y) + Math.abs(xc - a.x) + Math.abs(yb - ya) + Math.abs(b.x - xc) + Math.abs(b.y - yb);
+        if (len < bestLen && free(p)) {
+          best = p;
+          bestLen = len;
+        }
+      }
+    }
+    if (best) break; // columns are sorted by closeness; the first that works is good enough
+  }
+  return best;
+}
+
 /** orthogonal route: TB bends at mid-y, LR bends at mid-x */
 const manhattan = (pts: Pt[], dir: Dir) => {
   const out: Pt[] = [pts[0]];
@@ -242,11 +323,34 @@ export function geometry(plan: Plan, s: Settings, arr: Arranged, moved: Record<s
   }
   const byId = Object.fromEntries(nodes.map((n) => [n.group.id, n]));
   const stub = (p: Pt, k: number): Pt => (dir === 'TB' ? { x: p.x, y: p.y + k * STUB } : { x: p.x + k * STUB, y: p.y });
-  for (const e of plan.edges) {
+  // route in a "flow goes down" frame; LR is the transpose
+  const T = (p: Pt): Pt => (dir === 'TB' ? p : { x: p.y, y: p.x });
+  const rect = (n: NodeBox): Rect => (dir === 'TB' ? { x: n.x, y: n.y, w: n.w, h: n.h } : { x: n.y, y: n.x, w: n.h, h: n.w });
+  const hRuns: Run[] = [];
+  const vRuns: Run[] = [];
+  // short links first: they have the fewest options, long ones can detour around them
+  const order = [...plan.edges].sort((e1, e2) => {
+    const d = (e: typeof e1) => Math.abs(byId[e.from].outPort[e.item].y - byId[e.to].inPort[e.item].y) + Math.abs(byId[e.from].outPort[e.item].x - byId[e.to].inPort[e.item].x);
+    return d(e1) - d(e2);
+  });
+  for (const e of order) {
     const a = byId[e.from].outPort[e.item];
     const b = byId[e.to].inPort[e.item];
-    const mid = moved[e.from] || moved[e.to] ? [] : arr.routes[e.id];
-    segs.push(segment(manhattan([a, stub(a, 1), ...mid, stub(b, -1), b], dir), e.item, e.rate, s, e.id));
+    const lanes = conveyorsFor(e.rate, items[e.item].fluid, s).length;
+    const half = ((lanes - 1) * LANE_GAP) / 2 + 4;
+    const blocks = nodes.filter((n) => n !== byId[e.from] && n !== byId[e.to]).map(rect);
+    const hints = (arr.routes[e.id] ?? []).map((p) => T(p).x);
+    const r = route(T(a), T(b), half, e.item, blocks, hRuns, vRuns, hints);
+    const pts = r ? simplify(r).map(T) : simplify(manhattan([a, stub(a, 1), ...(arr.routes[e.id] ?? []), stub(b, -1), b], dir));
+    // remember the straight runs (in the routing frame) so later links keep their distance
+    const tp = pts.map(T);
+    for (let i = 1; i < tp.length; i++) {
+      const p = tp[i - 1];
+      const q = tp[i];
+      if (p.x === q.x) vRuns.push({ at: p.x, from: p.y, to: q.y, item: e.item, half });
+      else hRuns.push({ at: p.y, from: p.x, to: q.x, item: e.item, half });
+    }
+    segs.push(segment(pts, e.item, e.rate, s, e.id));
   }
   const x = Math.min(...nodes.map((n) => n.x)) - 40;
   const y = Math.min(...nodes.map((n) => n.y)) - 40;
