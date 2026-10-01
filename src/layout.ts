@@ -1,5 +1,6 @@
 import dagre from '@dagrejs/dagre';
 import { items, type Conveyor } from './game';
+import { buildings, extractors } from './game';
 import { conveyorsFor, type Group, type Plan } from './plan';
 import type { Settings } from './solver';
 
@@ -21,6 +22,7 @@ export type MachineBox = { x: number; y: number; w: number; h: number; clock: nu
 export type NodeBox = {
   group: Group; x: number; y: number; w: number; h: number; machines: MachineBox[];
   inPort: Record<string, Pt>; outPort: Record<string, Pt>;
+  titleX: number; // header text starts here (TB: right of the input buses that pass through the header)
 };
 export type Layout = { x: number; y: number; w: number; h: number; nodes: NodeBox[]; segs: Segment[] };
 /** result of the (expensive) auto-arrangement: node top-left corners + edge routes */
@@ -28,7 +30,6 @@ export type Arranged = { dir: Dir; pos: Record<string, Pt>; routes: Record<strin
 
 export const MW = 60; // machine box
 const GAP = 14;
-const LANE = 12; // spacing between parallel belts of different items
 const HEAD = 30;
 const PAD = 12;
 const EDGE = 8; // LR: margin between node edge and body along the flow axis
@@ -69,30 +70,47 @@ function segment(raw: Pt[], item: string, rate: number, s: Settings, edge?: stri
   return { ...path(pts), lanes, item, rate, fluid, conv, edge };
 }
 
-const lineLen = (g: Group) => g.inputs.length * LANE + MW + g.outputs.length * LANE + 26;
+export const titleOf = (g: Group) =>
+  g.kind === 'recipe' ? `${g.label} · ${g.machines.length}× ${(buildings[g.building!] ?? extractors[g.building!]).name}` : g.label;
+const TITLE_CHAR = 7; // ≈ px per char of the 12px semibold header font
+const NOTE_CHAR = 6; // 11px info line of simple boxes
+const INFO_LINE = 15; // must match the canvas' simple-box line height
 
-/** body extents: a = across the flow (machines side by side), b = along the flow */
-function body(g: Group) {
-  const maxM = Math.max(...g.lines.map((l) => l.machines.length));
-  return {
-    A: Math.max(170, PAD * 2 + (g.inputs.length + g.outputs.length) * LANE + 16 + maxM * (MW + GAP)),
-    B: g.lines.length * lineLen(g),
-  };
+/** spacing between belts of different items: wide enough for the most parallel belts this group carries */
+function lane(g: Group, s: Settings) {
+  const most = Math.max(1, ...[...g.inputs, ...g.outputs].map((f) => conveyorsFor(f.rate, items[f.item].fluid, s).length));
+  return Math.max(12, most * LANE_GAP + 6);
 }
+const lineLen = (g: Group, L: number) => g.inputs.length * L + MW + g.outputs.length * L + 26;
+const titleStart = (g: Group, dir: Dir, L: number) => (dir === 'TB' && g.lines.length && g.inputs.length ? PAD + g.inputs.length * L + 2 : 8);
+const titleWidth = (g: Group, dir: Dir, L: number) => titleStart(g, dir, L) + 24 + titleOf(g).length * TITLE_CHAR + 10;
 
-function size(g: Group, dir: Dir) {
-  const ports = Math.max(g.inputs.length, g.outputs.length) * 28 + 2 * PAD;
-  if (!g.lines.length) return dir === 'TB' ? { width: Math.max(170, ports), height: 64 } : { width: 170, height: Math.max(64, HEAD + ports) };
-  const { A, B } = body(g);
-  return dir === 'TB' ? { width: A, height: HEAD + B + 6 } : { width: Math.max(170, B + 2 * EDGE), height: HEAD + A };
+function size(g: Group, dir: Dir, s: Settings) {
+  const L = lane(g, s);
+  const tw = titleWidth(g, dir, L);
+  if (!g.lines.length) {
+    const ports = Math.max(g.inputs.length, g.outputs.length) * 28 + 2 * PAD;
+    // one info line per flow ("12.5/min Iron Plate")
+    const flows = [...g.inputs, ...g.outputs];
+    const info = Math.max(...flows.map((x) => `${x.rate.toFixed(1)}/min ${items[x.item].name}`.length)) * NOTE_CHAR + 20;
+    const w = Math.max(170, tw, info);
+    const h = Math.max(64, 44 + flows.length * INFO_LINE);
+    return dir === 'TB' ? { width: Math.max(w, ports), height: h } : { width: w, height: Math.max(h, HEAD + ports) };
+  }
+  const maxM = Math.max(...g.lines.map((l) => l.machines.length));
+  const A = PAD * 2 + (g.inputs.length + g.outputs.length) * L + 16 + maxM * (MW + GAP);
+  const B = g.lines.length * lineLen(g, L);
+  return dir === 'TB' ? { width: Math.max(170, A, tw), height: HEAD + B + 6 } : { width: Math.max(170, B + 2 * EDGE, tw), height: HEAD + Math.max(170, A) };
 }
 
 /** internal geometry of a group: machines, input bus → manifold → machines → collector → output bus */
-function inner(n: NodeBox, dir: Dir, s: Settings, segs: Segment[]) {
+function inner(n: NodeBox, dir: Dir, s: Settings, segs: Segment[], rin: number[], rout: number[]) {
   const g = n.group;
   const ni = g.inputs.length;
   const no = g.outputs.length;
   const tb = dir === 'TB';
+  const L = lane(g, s);
+  n.titleX = n.x + titleStart(g, dir, L);
   if (!g.lines.length) {
     // simple box: spread ports evenly along the entry / exit side
     const spot = (k: number, c: number, end: boolean): Pt =>
@@ -108,17 +126,18 @@ function inner(n: NodeBox, dir: Dir, s: Settings, segs: Segment[]) {
   const bIn = tb ? -HEAD : -EDGE;
   const bOut = tb ? n.h - HEAD : n.w - EDGE;
   const A = tb ? n.w : n.h - HEAD;
-  g.inputs.forEach((f, i) => (n.inPort[f.item] = at(PAD + i * LANE + 4, bIn)));
-  g.outputs.forEach((f, j) => (n.outPort[f.item] = at(A - PAD - j * LANE - 4, bOut)));
-  const lineH = lineLen(g);
-  const m0 = PAD + ni * LANE + 12;
+  // rin/rout: lane slot of each input/output, ordered so belts from neighbouring groups don't cross
+  g.inputs.forEach((f, i) => (n.inPort[f.item] = at(PAD + rin[i] * L + L / 2, bIn)));
+  g.outputs.forEach((f, j) => (n.outPort[f.item] = at(A - PAD - rout[j] * L - L / 2, bOut)));
+  const lineH = lineLen(g, L);
+  const m0 = PAD + ni * L + 12;
   const port = (k: number, count: number) => (MW * (k + 1)) / (count + 1);
   const seg = (pts: [number, number][], item: string, rate: number) => segs.push(segment(pts.map(([a, b]) => at(a, b)), item, rate, s));
-  const busIn = g.inputs.map((_, i) => [PAD + i * LANE + 4, bIn] as [number, number]);
+  const busIn = g.inputs.map((_, i) => [PAD + rin[i] * L + L / 2, bIn] as [number, number]);
   const busOut: ([number, number] | undefined)[] = [];
   g.lines.forEach((line, l) => {
     const top = l * lineH;
-    const mb = top + ni * LANE + 10;
+    const mb = top + ni * L + 10;
     const boxes = line.machines.map((mi, k) => {
       const m = g.machines[mi];
       const a = m0 + k * (MW + GAP);
@@ -127,25 +146,25 @@ function inner(n: NodeBox, dir: Dir, s: Settings, segs: Segment[]) {
       return a;
     });
     line.inputs.forEach((f, i) => {
-      const b = top + 6 + i * LANE;
+      const b = top + 6 + rin[i] * L;
       const busA = busIn[i][0];
       const busRate = g.lines.slice(l).reduce((acc, ln) => acc + ln.inputs[i].segs[0], 0);
       seg([busIn[i], [busA, b]], f.item, busRate);
       busIn[i] = [busA, b];
       let prev: [number, number] = [busA, b];
       boxes.forEach((a, k) => {
-        const da = a + port(i, ni);
+        const da = a + port(rin[i], ni);
         seg([prev, [da, b]], f.item, f.segs[k]);
         seg([[da, b], [da, mb]], f.item, f.segs[k] - (f.segs[k + 1] ?? 0));
         prev = [da, b];
       });
     });
     line.outputs.forEach((f, j) => {
-      const b = mb + MW + 10 + j * LANE;
-      const busA = A - PAD - j * LANE - 4;
+      const b = mb + MW + 10 + rout[j] * L;
+      const busA = A - PAD - rout[j] * L - L / 2;
       let prev: [number, number] | null = null;
       boxes.forEach((a, k) => {
-        const ua = a + port(j, no);
+        const ua = a + port(rout[j], no);
         seg([[ua, mb + MW], [ua, b]], f.item, f.segs[k] - (f.segs[k - 1] ?? 0));
         if (prev) seg([prev, [ua, b]], f.item, f.segs[k - 1]);
         prev = [ua, b];
@@ -157,7 +176,7 @@ function inner(n: NodeBox, dir: Dir, s: Settings, segs: Segment[]) {
       busOut[j] = [busA, b];
     });
   });
-  g.outputs.forEach((f, j) => seg([busOut[j]!, [A - PAD - j * LANE - 4, bOut]], f.item, f.rate));
+  g.outputs.forEach((f, j) => seg([busOut[j]!, [A - PAD - rout[j] * L - L / 2, bOut]], f.item, f.rate));
 }
 
 /** orthogonal route: TB bends at mid-y, LR bends at mid-x */
@@ -176,11 +195,11 @@ const manhattan = (pts: Pt[], dir: Dir) => {
 };
 
 /** auto-arrange groups with dagre (run once per plan / direction) */
-export function arrange(plan: Plan, dir: Dir): Arranged {
+export function arrange(plan: Plan, s: Settings, dir: Dir): Arranged {
   const g = new dagre.graphlib.Graph({ multigraph: true });
   g.setGraph({ rankdir: dir, nodesep: 70, ranksep: 110, edgesep: 24, marginx: 40, marginy: 40 });
   g.setDefaultEdgeLabel(() => ({}));
-  for (const gr of plan.groups) g.setNode(gr.id, size(gr, dir));
+  for (const gr of plan.groups) g.setNode(gr.id, size(gr, dir, s));
   for (const e of plan.edges) g.setEdge(e.from, e.to, {}, e.id);
   dagre.layout(g);
   const pos: Record<string, Pt> = {};
@@ -198,12 +217,29 @@ export function geometry(plan: Plan, s: Settings, arr: Arranged, moved: Record<s
   const { dir } = arr;
   const segs: Segment[] = [];
   const nodes: NodeBox[] = plan.groups.map((gr) => {
-    const { width, height } = size(gr, dir);
+    const { width, height } = size(gr, dir, s);
     const p = moved[gr.id] ?? arr.pos[gr.id];
-    const n: NodeBox = { group: gr, x: p.x, y: p.y, w: width, h: height, machines: [], inPort: {}, outPort: {} };
-    inner(n, dir, s, segs);
-    return n;
+    return { group: gr, x: p.x, y: p.y, w: width, h: height, machines: [], inPort: {}, outPort: {}, titleX: p.x + 8 };
   });
+  // position across the flow (x for TB, y for LR) of each group's centre
+  const across = Object.fromEntries(nodes.map((n) => [n.group.id, dir === 'TB' ? n.x + n.w / 2 : n.y + n.h / 2]));
+  const slots = (id: string, flows: { item: string }[], peer: (item: string) => string[], desc: boolean) => {
+    const key = flows.map((f, i) => {
+      const ps = peer(f.item);
+      return { i, k: ps.length ? ps.reduce((a, p) => a + across[p], 0) / ps.length : across[id] };
+    });
+    key.sort((a, b) => (desc ? b.k - a.k : a.k - b.k) || a.i - b.i);
+    const r: number[] = [];
+    key.forEach((x, slot) => (r[x.i] = slot));
+    return r;
+  };
+  for (const n of nodes) {
+    const id = n.group.id;
+    // inputs fill slots from the low side, outputs from the high side
+    const rin = slots(id, n.group.inputs, (item) => plan.edges.filter((e) => e.to === id && e.item === item).map((e) => e.from), false);
+    const rout = slots(id, n.group.outputs, (item) => plan.edges.filter((e) => e.from === id && e.item === item).map((e) => e.to), true);
+    inner(n, dir, s, segs, rin, rout);
+  }
   const byId = Object.fromEntries(nodes.map((n) => [n.group.id, n]));
   const stub = (p: Pt, k: number): Pt => (dir === 'TB' ? { x: p.x, y: p.y + k * STUB } : { x: p.x + k * STUB, y: p.y });
   for (const e of plan.edges) {
@@ -222,4 +258,4 @@ export function geometry(plan: Plan, s: Settings, arr: Arranged, moved: Record<s
   };
 }
 
-export const layout = (plan: Plan, s: Settings, dir: Dir = 'TB') => geometry(plan, s, arrange(plan, dir), {});
+export const layout = (plan: Plan, s: Settings, dir: Dir = 'TB') => geometry(plan, s, arrange(plan, s, dir), {});

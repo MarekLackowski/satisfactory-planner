@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
 import { buildings, extractors, fmt, icon, itemIcon, items, nameOf } from './game';
-import { LANE_GAP, type Layout, type NodeBox, type Path, type Pt, type Segment } from './layout';
+import { LANE_GAP, titleOf, type Layout, type NodeBox, type Path, type Pt, type Segment } from './layout';
 
 const imgCache = new Map<string, HTMLImageElement>();
 function img(src: string) {
@@ -36,6 +36,44 @@ function distToSeg(p: Pt, s: Segment) {
     best = Math.min(best, Math.hypot(p.x - a.x - t * (b.x - a.x), p.y - a.y - t * (b.y - a.y)));
   }
   return best;
+}
+
+const INFO_LINE = 15; // must match layout's simple-box line height
+
+type Rect = { x: number; y: number; w: number; h: number };
+type Label = Rect & { text: string };
+const labelCache = new WeakMap<Layout, Label[]>();
+
+/** belt labels for links between groups, placed where they cover neither a group nor another label */
+function placeLabels(layout: Layout, ctx: CanvasRenderingContext2D): Label[] {
+  const taken: Rect[] = layout.nodes.map((n) => ({ x: n.x - 3, y: n.y - 3, w: n.w + 6, h: n.h + 6 }));
+  const free = (r: Rect) => !taken.some((q) => r.x < q.x + q.w && r.x + r.w > q.x && r.y < q.y + q.h && r.y + r.h > q.y);
+  const out: Label[] = [];
+  for (const s of layout.segs) {
+    if (!s.edge) continue;
+    const text = `${s.conv.length > 1 ? `${s.conv.length}× ` : ''}Mk.${s.conv[0].mk} · ${fmt(s.rate)}/min`;
+    const w = ctx.measureText(text).width + 6;
+    const h = 14;
+    const side = ((s.lanes.length - 1) * LANE_GAP) / 2 + 5;
+    const pieces = s.pts.slice(1).map((b, i) => ({ a: s.pts[i], b })).sort((p, q) =>
+      Math.hypot(q.b.x - q.a.x, q.b.y - q.a.y) - Math.hypot(p.b.x - p.a.x, p.b.y - p.a.y));
+    let spot: Rect | null = null;
+    search: for (const { a, b } of pieces) {
+      for (const t of [0.5, 0.3, 0.7, 0.15, 0.85]) {
+        const p = { x: a.x + (b.x - a.x) * t, y: a.y + (b.y - a.y) * t };
+        const horiz = Math.abs(b.x - a.x) > Math.abs(b.y - a.y);
+        for (const r of horiz
+          ? [{ x: p.x - w / 2, y: p.y - side - h, w, h }, { x: p.x - w / 2, y: p.y + side, w, h }]
+          : [{ x: p.x + side, y: p.y - h / 2, w, h }, { x: p.x - side - w, y: p.y - h / 2, w, h }]) {
+          if (free(r)) { spot = r; break search; }
+        }
+      }
+    }
+    if (!spot) continue; // ponytail: no free spot → skip; the tooltip still has the numbers
+    taken.push(spot);
+    out.push({ ...spot, text });
+  }
+  return out;
 }
 
 type Props = {
@@ -90,16 +128,15 @@ export default function FactoryCanvas({ layout, fitKey, onMoveNode, playing, spe
       ctx.stroke();
       const head = g.building ? icon(nameOf(g.building)) : g.kind === 'sink' ? icon('AWESOME Sink') : itemIcon((g.outputs[0] ?? g.inputs[0]).item);
       const hi = img(head);
-      if (hi) ctx.drawImage(hi, n.x + 8, n.y + 5, 20, 20);
+      if (hi) ctx.drawImage(hi, n.titleX, n.y + 5, 20, 20);
       ctx.fillStyle = col('--text');
       ctx.font = '600 12px system-ui, sans-serif';
-      const title = g.kind === 'recipe' ? `${g.label} · ${g.machines.length}× ${nameOf(g.building!)}` : g.label;
-      ctx.fillText(title, n.x + 32, n.y + 19, n.w - 40);
+      ctx.fillText(titleOf(g), n.titleX + 24, n.y + 19, n.x + n.w - n.titleX - 30);
       if (!g.lines.length) {
         ctx.font = '11px system-ui, sans-serif';
         ctx.fillStyle = col('--muted');
-        const f = [...g.inputs, ...g.outputs];
-        ctx.fillText(f.map((x) => `${fmt(x.rate)}/min ${nameOf(x.item)}`).join(', '), n.x + 10, n.y + 44, n.w - 20);
+        [...g.inputs, ...g.outputs].forEach((x, i) =>
+          ctx.fillText(`${fmt(x.rate)}/min ${nameOf(x.item)}`, n.x + 10, n.y + 44 + i * INFO_LINE, n.w - 20));
       }
       for (const m of n.machines) {
         ctx.fillStyle = col('--machine');
@@ -189,15 +226,13 @@ export default function FactoryCanvas({ layout, fitKey, onMoveNode, playing, spe
       layout.segs.filter((s) => s.edge).forEach((s) => drawSeg(s, time.current));
       layout.segs.filter((s) => !s.edge).forEach((s) => drawSeg(s, time.current));
       ctx.font = '600 10px system-ui, sans-serif';
-      for (const s of layout.segs) {
-        if (!s.edge && s.conv.length < 2) continue;
-        const p = pointAt(s, s.len / 2);
-        const label = `${s.conv.length > 1 ? `${s.conv.length}× ` : ''}Mk.${s.conv[0].mk} · ${fmt(s.rate)}/min`;
-        const tw = ctx.measureText(label).width;
+      let labels = labelCache.get(layout);
+      if (!labels) labelCache.set(layout, (labels = placeLabels(layout, ctx)));
+      for (const l of labels) {
         ctx.fillStyle = col('--label-bg');
-        ctx.fillRect(p.x + 6, p.y - 8, tw + 6, 14);
+        ctx.fillRect(l.x, l.y, l.w, l.h);
         ctx.fillStyle = col('--text');
-        ctx.fillText(label, p.x + 9, p.y + 3);
+        ctx.fillText(l.text, l.x + 3, l.y + 10.5);
       }
       raf = requestAnimationFrame(frame);
     };

@@ -180,7 +180,7 @@ export default function App() {
   }, [s, hasFactory]);
 
   const plan = result && 'plan' in result ? result.plan : null;
-  const arranged = useMemo(() => (plan ? arrange(plan, dir) : null), [plan, dir]);
+  const arranged = useMemo(() => (plan ? arrange(plan, s, dir) : null), [plan, dir]); // eslint-disable-line react-hooks/exhaustive-deps
   const lay = useMemo(() => (plan && arranged ? geometry(plan, s, arranged, moved) : null), [arranged, moved]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const updInput = (k: number, patch: Partial<Input>) =>
