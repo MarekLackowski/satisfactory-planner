@@ -213,8 +213,37 @@ export default function FactoryCanvas({ layout, fitKey, onMoveNode, playing, spe
 
   const drag = useRef<{ x: number; y: number } | null>(null);
   const grab = useRef<{ id: string; dx: number; dy: number } | null>(null);
+  // touch: active pointers + last pinch (finger distance and midpoint, client coords)
+  const pointers = useRef(new Map<number, { x: number; y: number }>());
+  const pinch = useRef<{ d: number; mx: number; my: number } | null>(null);
+  const pinchNow = () => {
+    const [a, b] = [...pointers.current.values()];
+    return { d: Math.hypot(a.x - b.x, a.y - b.y) || 1, mx: (a.x + b.x) / 2, my: (a.y + b.y) / 2 };
+  };
+  /** zoom by factor keeping the world point under screen point (sx, sy) fixed; optional pan to (tx, ty) */
+  const zoomAt = (sx: number, sy: number, factor: number, tx = sx, ty = sy) => {
+    const { x, y, k } = view.current;
+    const k2 = Math.min(4, Math.max(0.05, k * factor));
+    const wx = (sx - x) / k;
+    const wy = (sy - y) / k;
+    view.current = { k: k2, x: tx - wx * k2, y: ty - wy * k2 };
+  };
+  const release = (e: React.PointerEvent) => {
+    pointers.current.delete(e.pointerId);
+    if (pointers.current.size < 2) pinch.current = null;
+    drag.current = null;
+    grab.current = null;
+  };
   const nodeAt = (p: Pt) => layout.nodes.find((n) => p.x >= n.x && p.x <= n.x + n.w && p.y >= n.y && p.y <= n.y + n.h);
   const onMove = (e: React.PointerEvent) => {
+    if (pointers.current.has(e.pointerId)) pointers.current.set(e.pointerId, { x: e.clientX, y: e.clientY });
+    if (pinch.current && pointers.current.size >= 2) {
+      const r = ref.current!.getBoundingClientRect();
+      const now = pinchNow();
+      zoomAt(pinch.current.mx - r.left, pinch.current.my - r.top, now.d / pinch.current.d, now.mx - r.left, now.my - r.top);
+      pinch.current = now;
+      return;
+    }
     if (grab.current) {
       const p = toWorld(e);
       onMoveNode(grab.current.id, { x: Math.round((p.x - grab.current.dx) / 10) * 10, y: Math.round((p.y - grab.current.dy) / 10) * 10 });
@@ -263,23 +292,29 @@ export default function FactoryCanvas({ layout, fitKey, onMoveNode, playing, spe
       <canvas
         ref={ref}
         onPointerDown={(e) => {
+          e.currentTarget.setPointerCapture(e.pointerId);
+          pointers.current.set(e.pointerId, { x: e.clientX, y: e.clientY });
+          if (pointers.current.size === 2) {
+            // second finger: switch from drag/pan to pinch-zoom
+            drag.current = null;
+            grab.current = null;
+            pinch.current = pinchNow();
+            setTip(null);
+            return;
+          }
           const p = toWorld(e);
           const n = nodeAt(p);
           if (n) grab.current = { id: n.group.id, dx: p.x - n.x, dy: p.y - n.y };
           else drag.current = { x: e.clientX, y: e.clientY };
           setTip(null);
-          e.currentTarget.setPointerCapture(e.pointerId);
         }}
-        onPointerUp={() => {
-          drag.current = null;
-          grab.current = null;
-        }}
+        onPointerUp={release}
+        onPointerCancel={release}
         onPointerMove={onMove}
         onPointerLeave={() => setTip(null)}
         onWheel={(e) => {
           const p = toWorld(e);
-          const k = Math.min(4, Math.max(0.05, view.current.k * Math.exp(-e.deltaY * 0.0015)));
-          view.current = { k, x: p.sx - p.x * k, y: p.sy - p.y * k };
+          zoomAt(p.sx, p.sy, Math.exp(-e.deltaY * 0.0015));
         }}
       />
       <button className="fit" onClick={fit} title="Fit to screen">⤢ Fit</button>

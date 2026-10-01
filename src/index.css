@@ -161,3 +161,28 @@ aside footer .row { margin-bottom: 4px; }
 .kofi:hover { text-decoration: underline; }
 .legal { margin: 0; font-size: 10.5px; color: var(--muted); line-height: 1.35; }
 .legal a { color: inherit; }
+.picker { position: relative; }
+.picker-btn { display: flex; align-items: center; gap: 6px; width: 100%; min-width: 0; text-align: left; padding: 3px 8px 3px 4px; }
+.picker-btn span:not(.caret) { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.caret { color: var(--muted); font-size: 11px; }
+.picker-backdrop { position: fixed; inset: 0; z-index: 9; }
+.picker-pop {
+  position: absolute; z-index: 10; top: calc(100% + 4px); left: 0; width: max(100%, 280px); padding: 6px; background: var(--panel);
+  border: 1px solid var(--line); border-radius: 8px; box-shadow: 0 8px 24px rgba(0, 0, 0, 0.3);
+}
+.picker-pop input { width: 100%; margin-bottom: 4px; }
+.picker-pop ul { list-style: none; margin: 0; padding: 0; max-height: 300px; overflow: auto; }
+.picker-pop li { display: flex; align-items: center; gap: 8px; padding: 4px 6px; border-radius: 5px; cursor: pointer; font-size: 13px; }
+.picker-pop li.hi { background: var(--machine); }
+.picker-pop li.sel { color: var(--accent); font-weight: 600; }
+.picker-pop .empty-row { color: var(--muted); cursor: default; }
+@media (max-width: 860px) {
+  .app { grid-template-columns: minmax(0, 1fr); }
+  aside, main { min-width: 0; }
+  .row { flex-wrap: wrap; }
+  .row > .item-select { flex: 1 1 100%; }
+  .grid { grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); }
+  .stats { flex-wrap: wrap; gap: 8px 20px; }
+  .legend { display: none; }
+  main { height: 85vh; }
+}
