@@ -260,15 +260,15 @@ export default function App() {
                 onClick={() => set({ outputs: [...s.outputs, { item: makeable[0], rate: 10, maximize: false }] })}>+ Add output</button>
             </section>
 
-            <section className={`power-limit${s.powerBudget ? ' on' : ''}`}>
-              <h2>⚡ Power limit <small>(this factory)</small></h2>
+            <section>
+              <h2>Power limit</h2>
               <div className="row">
                 <input type="number" min={0} step="any" placeholder="No limit" aria-label="Power limit in MW" value={s.powerBudget || ''}
                   onChange={(e) => set({ powerBudget: Math.max(0, +e.target.value) || undefined })} />
                 <span className="unit">MW</span>
                 {s.powerBudget ? <button className="x" aria-label="Remove power limit" onClick={() => set({ powerBudget: undefined })}>×</button> : null}
               </div>
-              <p className="hint">Everything incl. miners must fit. With <b>Max</b> on an output you get the most it can make within this power.</p>
+              <p className="hint">Includes miners. With Max, makes as much as fits.</p>
             </section>
 
             <section>

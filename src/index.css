@@ -204,9 +204,6 @@ aside footer .row { margin-bottom: 4px; }
 .panel, .summary { scrollbar-gutter: stable; }
 .unit.dim { opacity: 0.5; }
 input:disabled { opacity: 0.45; cursor: not-allowed; }
-.power-limit { border-left: 3px solid var(--line); padding-left: 10px; margin-left: -13px; }
-.power-limit.on { border-left-color: var(--accent); }
-.power-limit input[type='number'] { width: 110px; font-size: 16px; font-weight: 600; }
 .stats meter { width: 90px; margin-left: 8px; vertical-align: middle; }
 .miner .unit { min-width: 70px; }
 .row button.primary { margin-top: 0; }
