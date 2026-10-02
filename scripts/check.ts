@@ -157,6 +157,28 @@ const near = (a: number, b: number, msg: string) => assert.ok(Math.abs(a - b) < 
   assert.deepEqual(screws.conv.map((c) => c.mk).sort(), [1, 2]);
 }
 
+// 2i) belts inside groups: feeds never cross the manifold rows of earlier items (rotor: 5 -> 1 crossing)
+{
+  const s: Settings = {
+    ...base, unlimitedRaw: false, beltMk: [1, 2], cheapBelts: true, alts: ['Recipe_Alternate_Screw_C'],
+    buildings: ['Build_ConstructorMk1_C', 'Build_SmelterMk1_C', 'Build_AssemblerMk1_C', 'Build_MinerMk1_C'],
+    outputs: [{ item: 'Desc_Rotor_C', rate: 1, maximize: true }],
+    inputs: [{ kind: 'miner', extractor: 'Build_MinerMk1_C', item: 'Desc_OreIron_C', purity: 'normal', count: 1, clock: 1 }],
+  };
+  const l = layout(await solvePlan(s), s);
+  const h: { y: number; x1: number; x2: number }[] = [];
+  const v: { x: number; y1: number; y2: number }[] = [];
+  for (const sg of l.segs.filter((x) => !x.edge)) {
+    for (let i = 1; i < sg.pts.length; i++) {
+      const [a, b] = [sg.pts[i - 1], sg.pts[i]];
+      if (a.y === b.y) h.push({ y: a.y, x1: Math.min(a.x, b.x), x2: Math.max(a.x, b.x) });
+      else v.push({ x: a.x, y1: Math.min(a.y, b.y), y2: Math.max(a.y, b.y) });
+    }
+  }
+  const n = h.reduce((t, p) => t + v.filter((q) => q.x > p.x1 + 1 && q.x < p.x2 - 1 && p.y > q.y1 + 1 && p.y < q.y2 - 1).length, 0);
+  assert.ok(n <= 1, `${n} crossings inside groups`);
+}
+
 // 3) infeasible: no buildings
 await assert.rejects(solve({ ...base, buildings: [], outputs: [{ item: 'Desc_IronPlate_C', rate: 10, maximize: false }] }));
 

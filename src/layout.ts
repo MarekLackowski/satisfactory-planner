@@ -154,7 +154,8 @@ function inner(n: NodeBox, dir: Dir, s: Settings, segs: Segment[], rin: number[]
       return a;
     });
     line.inputs.forEach((f, i) => {
-      const b = top + 6 + rin[i] * L;
+      // rightmost feed gets the top row, so feeds heading to lower rows never cross a row above them
+      const b = top + 6 + (ni - 1 - rin[i]) * L;
       const x = PAD + rin[i] * L + L / 2 + off(l);
       // feed from the port straight into this line's manifold
       let prev: [number, number][] = [[x, bIn], [x, b]];

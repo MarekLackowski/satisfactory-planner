@@ -50,6 +50,30 @@ type Rect = { x: number; y: number; w: number; h: number };
 type Label = Rect & { text: string };
 const labelCache = new WeakMap<Layout, Label[]>();
 
+/** where a vertical belt piece crosses a horizontal one of another belt: drawn as an overpass (lift) */
+type Bridge = { seg: Segment; lane: number; x: number; y: number };
+const bridgeCache = new WeakMap<Layout, Bridge[]>();
+function findBridges(layout: Layout): Bridge[] {
+  const h: { s: Segment; y: number; x1: number; x2: number }[] = [];
+  const v: { s: Segment; x: number; y1: number; y2: number }[] = [];
+  for (const s of layout.segs) {
+    for (let i = 1; i < s.pts.length; i++) {
+      const a = s.pts[i - 1];
+      const b = s.pts[i];
+      if (a.y === b.y) h.push({ s, y: a.y, x1: Math.min(a.x, b.x), x2: Math.max(a.x, b.x) });
+      else v.push({ s, x: a.x, y1: Math.min(a.y, b.y), y2: Math.max(a.y, b.y) });
+    }
+  }
+  const out: Bridge[] = [];
+  for (const q of v) {
+    for (const p of h) {
+      if (p.s === q.s || !(q.x > p.x1 + 2 && q.x < p.x2 - 2 && p.y > q.y1 + 2 && p.y < q.y2 - 2)) continue;
+      q.s.lanes.forEach((_, k) => out.push({ seg: q.s, lane: k, x: q.x, y: p.y }));
+    }
+  }
+  return out;
+}
+
 /** belt labels for links between groups, placed where they cover neither a group nor another label */
 function placeLabels(layout: Layout, ctx: CanvasRenderingContext2D): Label[] {
   const taken: Rect[] = layout.nodes.map((n) => ({ x: n.x - 3, y: n.y - 3, w: n.w + 6, h: n.h + 6 }));
@@ -185,6 +209,36 @@ export default function FactoryCanvas({ layout, fitKey, onMoveNode, playing, spe
           ctx.stroke();
         });
       }
+      // overpasses: the vertical belt is redrawn over the crossing with a dark halo, so it reads as passing over
+      let bridges = bridgeCache.get(layoutRef.current);
+      if (!bridges) bridgeCache.set(layoutRef.current, (bridges = findBridges(layoutRef.current)));
+      ctx.lineCap = 'butt';
+      for (const br of bridges) {
+        const s = br.seg;
+        const lane = s.lanes[br.lane];
+        // this lane's own vertical piece at the crossing (parallel lanes are offset sideways)
+        const piece = lane.pts.findIndex((p, i) => i > 0 && Math.abs(p.x - lane.pts[i - 1].x) < 0.01 && br.y > Math.min(p.y, lane.pts[i - 1].y) && br.y < Math.max(p.y, lane.pts[i - 1].y));
+        if (piece < 0) continue;
+        const x = lane.pts[piece].x;
+        const w = s.fluid ? 6 : 5;
+        ctx.strokeStyle = col('--canvas');
+        ctx.lineWidth = w + 7;
+        ctx.beginPath();
+        ctx.moveTo(x, br.y - 9);
+        ctx.lineTo(x, br.y + 9);
+        ctx.stroke();
+        ctx.strokeStyle = col('--belt-edge');
+        ctx.lineWidth = w + 2.5;
+        ctx.stroke();
+        const c2 = s.conv[br.lane];
+        ctx.strokeStyle = opts.current.colorBy === 'load' ? loadColor(s.laneRates[br.lane] / c2.rate) : TIER_COLORS[c2.mk - 1];
+        ctx.lineWidth = w;
+        ctx.beginPath();
+        ctx.moveTo(x, br.y - 10.5);
+        ctx.lineTo(x, br.y + 10.5);
+        ctx.stroke();
+      }
+      ctx.lineCap = 'round';
       // fluids: liquid streaming through the pipe
       ctx.lineCap = 'butt';
       for (const s of segs) {
