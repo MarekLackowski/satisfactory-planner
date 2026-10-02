@@ -4,9 +4,9 @@ import { loadFactories, newFactory, saveFactories, type Factories, type Factory 
 import FactoryCanvas from './FactoryCanvas';
 import WiringDiagram from './WiringDiagram';
 import {
-  belts, buildings, extractors, fmt, icon, itemIcon, items, nameOf, pipes, producible, rawItems, recipes, WATER_PUMP, type Purity,
+  TIER_COLORS, type ColorBy, belts, buildings, extractors, fmt, icon, itemIcon, items, nameOf, pipes, producible, rawItems, recipes, WATER_PUMP, type Purity,
 } from './game';
-import { arrange, geometry, type Dir, type Pt } from './layout';
+import { autoArrange, geometry, type Dir, type Pt } from './layout';
 import { solvePlan, type Plan } from './plan';
 import { enabledRecipes, minerRate, type Input, type Settings } from './solver';
 
@@ -47,6 +47,14 @@ const Icon = ({ src, size = 22 }: { src: string; size?: number }) => (
   <img src={src} width={size} height={size} alt="" className="icon" onError={(e) => (e.currentTarget.style.visibility = 'hidden')} />
 );
 
+/** scroll only the picker list (scrollIntoView would also scroll the side panel and make the UI jump) */
+function keepVisible(el: HTMLElement | null) {
+  const list = el?.parentElement;
+  if (!el || !list) return;
+  if (el.offsetTop < list.scrollTop) list.scrollTop = el.offsetTop;
+  else if (el.offsetTop + el.offsetHeight > list.scrollTop + list.clientHeight) list.scrollTop = el.offsetTop + el.offsetHeight - list.clientHeight;
+}
+
 /** searchable item picker: type to filter, arrows + Enter to pick, Esc to close */
 function ItemSelect({ value, options, onChange }: { value: string; options: string[]; onChange: (v: string) => void }) {
   const [open, setOpen] = useState(false);
@@ -68,7 +76,7 @@ function ItemSelect({ value, options, onChange }: { value: string; options: stri
           <div className="picker-backdrop" onClick={close} />
           <div className="picker-pop">
             <input
-              type="search" autoFocus placeholder={`Search ${options.length} items…`} value={q} aria-label="Search items"
+              type="search" ref={(el) => el?.focus({ preventScroll: true })} placeholder={`Search ${options.length} items…`} value={q} aria-label="Search items"
               onChange={(e) => { setQ(e.target.value); setHi(0); }}
               onKeyDown={(e) => {
                 if (e.key === 'ArrowDown') { e.preventDefault(); setHi((h) => Math.min(h + 1, shown.length - 1)); }
@@ -81,7 +89,7 @@ function ItemSelect({ value, options, onChange }: { value: string; options: stri
               {shown.map((id, i) => (
                 <li key={id} role="option" aria-selected={id === value} className={`${i === hi ? 'hi' : ''} ${id === value ? 'sel' : ''}`}
                   onMouseEnter={() => setHi(i)} onClick={() => pick(id)}
-                  ref={i === hi ? (el) => el?.scrollIntoView({ block: 'nearest' }) : undefined}>
+                  ref={i === hi ? (el) => keepVisible(el) : undefined}>
                   <Icon src={itemIcon(id)} size={24} />{nameOf(id)}
                 </li>
               ))}
@@ -102,18 +110,25 @@ export default function App() {
     const s0 = load();
     const f0 = loadFactories({ outputs: s0.outputs, inputs: s0.inputs });
     const a = f0.list.find((x) => x.id === f0.active);
-    return { s: { ...s0, outputs: a?.outputs ?? [], inputs: a?.inputs ?? [] }, f: f0 };
+    return { s: { ...s0, outputs: a?.outputs ?? [], inputs: a?.inputs ?? [], powerBudget: a?.powerBudget }, f: f0 };
   });
   const [s, setS] = useState<Settings>(init.s);
   const set = (patch: Partial<Settings>) => setS((p) => ({ ...p, ...patch }));
   const [tab, setTab] = useState<'factories' | 'production' | 'unlocks'>('production');
   const [fac, setFac] = useState<Factories>(init.f);
+  const [naming, setNaming] = useState('');
   const active = fac.list.find((x) => x.id === fac.active); // undefined once every factory is deleted
   const [result, setResult] = useState<{ plan: Plan } | { error: string } | { info: string } | null>(null);
   const [busy, setBusy] = useState(false);
   const [playing, setPlaying] = useState(true);
   const [speed, setSpeed] = useState(1);
-  const [bottlenecks, setBottlenecks] = useState(true);
+  const [colorBy, setColorByState] = useState<ColorBy>(() => {
+    try { return localStorage.getItem('satisfactory-colorby') === 'tier' ? 'tier' : 'load'; } catch { return 'load'; }
+  });
+  const setColorBy = (c: ColorBy) => {
+    setColorByState(c);
+    try { localStorage.setItem('satisfactory-colorby', c); } catch { /* storage unavailable */ }
+  };
   const [altQuery, setAltQuery] = useState('');
   const hasFactory = !!active;
   const view = !active && tab === 'production' ? 'factories' : tab; // nothing to edit without a factory
@@ -127,23 +142,24 @@ export default function App() {
   // ---- factories: the active one is the live editor state (autosaved); unlocks/options live in `s` and are shared
   const current = useMemo<Factories>(() => ({
     ...fac,
-    list: fac.list.map((x) => (x.id === fac.active ? { ...x, outputs: s.outputs, inputs: s.inputs, dir, moved } : x)),
-  }), [fac, s.outputs, s.inputs, dir, moved]);
+    list: fac.list.map((x) => (x.id === fac.active ? { ...x, outputs: s.outputs, inputs: s.inputs, powerBudget: s.powerBudget, dir, moved } : x)),
+  }), [fac, s.outputs, s.inputs, s.powerBudget, dir, moved]);
   useEffect(() => saveFactories(current), [current]);
   const patchActive = (patch: Partial<Factory>) =>
     setFac((f) => ({ ...f, list: f.list.map((x) => (x.id === f.active ? { ...x, ...patch, updated: Date.now() } : x)) }));
   const open = (x: Factory) => {
     setFac({ list: current.list, active: x.id });
-    setS((p) => ({ ...p, outputs: x.outputs, inputs: x.inputs }));
+    setS((p) => ({ ...p, outputs: x.outputs, inputs: x.inputs, powerBudget: x.powerBudget }));
     setDir(x.dir);
     setMoved(x.moved);
   };
   const addFactory = (x: Factory) => {
     setFac({ list: [...current.list, x], active: x.id });
-    setS((p) => ({ ...p, outputs: x.outputs, inputs: x.inputs }));
+    setS((p) => ({ ...p, outputs: x.outputs, inputs: x.inputs, powerBudget: x.powerBudget }));
     setDir(x.dir);
     setMoved(x.moved);
-    setTab('production');
+    setTab('factories');
+    setNaming(x.id); // focus the name field so it can be named / given an icon first
   };
   const removeFactory = (id: string) => {
     const rest = current.list.filter((x) => x.id !== id);
@@ -181,11 +197,12 @@ export default function App() {
   }, [s, hasFactory]);
 
   const plan = result && 'plan' in result ? result.plan : null;
-  const arranged = useMemo(() => (plan ? arrange(plan, s, dir) : null), [plan, dir]); // eslint-disable-line react-hooks/exhaustive-deps
+  const arranged = useMemo(() => (plan ? autoArrange(plan, s, dir) : null), [plan, dir]); // eslint-disable-line react-hooks/exhaustive-deps
   const lay = useMemo(() => (plan && arranged ? geometry(plan, s, arranged, moved) : null), [arranged, moved]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const updInput = (k: number, patch: Partial<Input>) =>
     set({ inputs: s.inputs.map((x, i) => (i === k ? ({ ...x, ...patch } as Input) : x)) });
+  const maxCount = s.outputs.filter((o) => o.maximize).length;
   const enabledExtractors = Object.values(extractors).filter((e) => s.buildings.includes(e.id));
   // only items the unlocked recipes/buildings can make
   const makeable = useMemo(() => {
@@ -212,7 +229,7 @@ export default function App() {
         </header>
 
         {view === 'factories' ? (
-          <FactoriesPanel f={current} onRename={patchActive} onOpen={(id) => open(current.list.find((x) => x.id === id)!)}
+          <FactoriesPanel f={current} naming={naming} onStart={() => setTab('production')} onRename={patchActive} onOpen={(id) => open(current.list.find((x) => x.id === id)!)}
             onNew={() => addFactory(newFactory(`Factory ${fac.list.length + 1}`, { dir }))}
             onDuplicate={(id) => {
               const src = current.list.find((x) => x.id === id)!;
@@ -227,9 +244,11 @@ export default function App() {
                 <div className="row" key={k}>
                   <ItemSelect value={o.item} options={makeable}
                     onChange={(item) => set({ outputs: s.outputs.map((x, i) => (i === k ? { ...x, item } : x)) })} />
-                  <input type="number" min={0} step="any" value={o.rate} title={o.maximize ? 'Ratio between maximized outputs' : 'Items per minute'}
+                  <input type="number" min={0} step="any" value={o.maximize && maxCount === 1 ? '' : o.rate} placeholder={o.maximize ? 'max' : ''}
+                    disabled={o.maximize && maxCount === 1}
+                    title={o.maximize ? (maxCount > 1 ? 'Ratio between the maximized outputs' : 'Maximized: as much as possible') : 'Items per minute'}
                     onChange={(e) => set({ outputs: s.outputs.map((x, i) => (i === k ? { ...x, rate: +e.target.value } : x)) })} />
-                  <span className="unit">{o.maximize ? 'ratio' : '/min'}</span>
+                  <span className={`unit${o.maximize && maxCount === 1 ? ' dim' : ''}`}>{o.maximize ? (maxCount > 1 ? 'ratio' : 'max') : '/min'}</span>
                   <label className="chk" title="Maximize this output with the available inputs">
                     <input type="checkbox" checked={o.maximize}
                       onChange={(e) => set({ outputs: s.outputs.map((x, i) => (i === k ? { ...x, maximize: e.target.checked } : x)) })} />Max
@@ -239,6 +258,17 @@ export default function App() {
               ))}
               <button disabled={!makeable.length} title={makeable.length ? '' : 'Unlock buildings first'}
                 onClick={() => set({ outputs: [...s.outputs, { item: makeable[0], rate: 10, maximize: false }] })}>+ Add output</button>
+            </section>
+
+            <section className={`power-limit${s.powerBudget ? ' on' : ''}`}>
+              <h2>⚡ Power limit <small>(this factory)</small></h2>
+              <div className="row">
+                <input type="number" min={0} step="any" placeholder="No limit" aria-label="Power limit in MW" value={s.powerBudget || ''}
+                  onChange={(e) => set({ powerBudget: Math.max(0, +e.target.value) || undefined })} />
+                <span className="unit">MW</span>
+                {s.powerBudget ? <button className="x" aria-label="Remove power limit" onClick={() => set({ powerBudget: undefined })}>×</button> : null}
+              </div>
+              <p className="hint">Everything incl. miners must fit. With <b>Max</b> on an output you get the most it can make within this power.</p>
             </section>
 
             <section>
@@ -322,11 +352,6 @@ export default function App() {
                 </label>
                 <label className="mini">Power shards <input type="number" min={0} step={1} value={s.shards} onChange={(e) => set({ shards: Math.max(0, Math.round(+e.target.value)) })} /></label>
               </div>
-              <div className="row">
-                <label className="mini" title="Total MW the factory may use, incl. miners/extractors. Combine with Max on an output to get the most out of your power.">Power budget
-                  <input type="number" min={0} step="any" placeholder="no limit" value={s.powerBudget || ''} onChange={(e) => set({ powerBudget: Math.max(0, +e.target.value) })} /> MW
-                </label>
-              </div>
             </section>
           </div>
         ) : (
@@ -392,7 +417,7 @@ export default function App() {
         )}
         <footer>
           <div className="row">
-            <button onClick={() => { if (confirm('Reset unlocks and options? Factories are kept.')) setS((p) => ({ ...DEFAULTS, outputs: p.outputs, inputs: p.inputs })); }}>Reset unlocks & options</button>
+            <button onClick={() => { if (confirm('Reset unlocks and options? Factories are kept.')) setS((p) => ({ ...DEFAULTS, outputs: p.outputs, inputs: p.inputs, powerBudget: p.powerBudget })); }}>Reset unlocks & options</button>
             <a className="kofi" href="https://ko-fi.com/mareklackowski" target="_blank" rel="noopener noreferrer">☕ Buy me a coffee</a>
           </div>
           <p className="legal">
@@ -418,10 +443,17 @@ export default function App() {
             <input type="range" min={0.25} max={4} step={0.25} value={speed} onChange={(e) => setSpeed(+e.target.value)} />
             {speed}×
           </label>
-          <label className="chk"><input type="checkbox" checked={bottlenecks} onChange={(e) => setBottlenecks(e.target.checked)} />Highlight belt load</label>
-          {bottlenecks && (
+          <span className="seg" role="group" aria-label="Belt colour">
+            <button className={colorBy === 'load' ? 'on' : ''} onClick={() => setColorBy('load')} title="Colour belts by how full they are">Load</button>
+            <button className={colorBy === 'tier' ? 'on' : ''} onClick={() => setColorBy('tier')} title="Colour belts by Mk tier">Tier</button>
+          </span>
+          {colorBy === 'load' ? (
             <span className="legend">
               <i style={{ background: '#3fa66a' }} />&lt;70% <i style={{ background: '#c9b33a' }} />70–95% <i style={{ background: '#f5a524' }} />95–100% <i style={{ background: '#e5484d' }} />over
+            </span>
+          ) : (
+            <span className="legend">
+              {TIER_COLORS.map((c, i) => <span key={c}><i style={{ background: c }} />Mk.{i + 1} </span>)}
             </span>
           )}
           <span className="seg">
@@ -433,11 +465,11 @@ export default function App() {
         </div>
         {result && 'error' in result && <div className="error">{result.error}</div>}
         {lay && (
-          <FactoryCanvas layout={lay} fitKey={arranged} playing={playing} speed={speed} bottlenecks={bottlenecks}
+          <FactoryCanvas layout={lay} fitKey={arranged} playing={playing} speed={speed} colorBy={colorBy}
             onMoveNode={(id, p) => setMoved((m) => ({ ...m, [id]: p }))} />
         )}
         {result && 'info' in result && <div className="info">{result.info}</div>}
-        {plan && <Summary plan={plan} />}
+        {plan && <Summary plan={plan} budget={s.powerBudget} />}
         </>)}
       </main>
     </div>
@@ -450,7 +482,7 @@ const List = ({ rows }: { rows: [string, string, string][] }) => (
   </ul>
 );
 
-function Summary({ plan }: { plan: Plan }) {
+function Summary({ plan, budget }: { plan: Plan; budget?: number }) {
   const machines = plan.groups.filter((g) => g.kind === 'recipe');
   const sources = plan.groups.filter((g) => g.kind === 'extract' || g.kind === 'input');
   const outs = plan.groups.filter((g) => g.kind === 'output' || g.kind === 'sink');
@@ -459,7 +491,7 @@ function Summary({ plan }: { plan: Plan }) {
     <div className="summary">
       {plan.warnings.map((w) => <div key={w} className="warn">{w}</div>)}
       <div className="stats">
-        <div><b>{fmt(plan.power)}</b> MW power</div>
+        <div><b>{fmt(plan.power)}</b>{budget ? <> / {fmt(budget)}</> : null} MW power{budget ? <meter min={0} max={budget} value={plan.power} high={budget * 0.95} optimum={budget * 0.5} /> : null}</div>
         <div><b>{machines.reduce((a, g) => a + g.machines.length, 0)}</b> production machines</div>
         <div><b>{plan.edges.length}</b> inter-group belts</div>
       </div>

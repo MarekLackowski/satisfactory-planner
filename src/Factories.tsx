@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { buildings, extractors, icon, items, nameOf } from './game';
 import type { Factories, Factory } from './storage';
 
@@ -19,7 +19,7 @@ function IconPicker({ value, onChange }: { value: string; onChange: (v: string) 
       </button>
       {open && (
         <div className="icon-pop">
-          <input type="search" autoFocus placeholder="Search icons…" value={q} onChange={(e) => setQ(e.target.value)} />
+          <input type="search" ref={(el) => el?.focus({ preventScroll: true })} placeholder="Search icons…" value={q} onChange={(e) => setQ(e.target.value)} />
           <div className="icon-grid">
             {ICONS.filter((n) => n.toLowerCase().includes(q.toLowerCase())).map((n) => (
               <button key={n} title={n} aria-label={n} className={n === value ? 'on' : ''} onClick={() => { onChange(n); setOpen(false); }}>
@@ -35,6 +35,8 @@ function IconPicker({ value, onChange }: { value: string; onChange: (v: string) 
 
 type Props = {
   f: Factories;
+  naming: string; // id of a factory just created: focus its name
+  onStart: () => void;
   onRename: (patch: Partial<Pick<Factory, 'name' | 'icon'>>) => void;
   onOpen: (id: string) => void;
   onNew: () => void;
@@ -42,8 +44,12 @@ type Props = {
   onDelete: (id: string) => void;
 };
 
-export default function FactoriesPanel({ f, onRename, onOpen, onNew, onDuplicate, onDelete }: Props) {
+export default function FactoriesPanel({ f, naming, onStart, onRename, onOpen, onNew, onDuplicate, onDelete }: Props) {
   const cur = f.list.find((x) => x.id === f.active);
+  const nameRef = useRef<HTMLInputElement>(null);
+  useEffect(() => {
+    if (naming && naming === f.active) nameRef.current?.select();
+  }, [naming, f.active]);
   return (
     <div className="panel">
       {!cur ? (
@@ -56,10 +62,14 @@ export default function FactoriesPanel({ f, onRename, onOpen, onNew, onDuplicate
         <h2>Current factory</h2>
         <div className="row current">
           <IconPicker value={cur.icon} onChange={(v) => onRename({ icon: v })} />
-          <input className="name" value={cur.name} aria-label="Factory name" onChange={(e) => onRename({ name: e.target.value })} />
+          <input className="name" ref={nameRef} value={cur.name} aria-label="Factory name" onChange={(e) => onRename({ name: e.target.value })}
+            onKeyDown={(e) => e.key === 'Enter' && onStart()} />
         </div>
-        <p className="hint">Changes are saved automatically. Unlocks and options are shared by all factories.</p>
-        <button className="primary" onClick={onNew}>+ New factory</button>
+        <p className="hint">Changes are saved automatically. Unlocks and options are shared by all factories; outputs, inputs and the power limit belong to this one.</p>
+        <div className="row">
+          <button className="primary" onClick={onStart}>Plan production →</button>
+          <button onClick={onNew}>+ New factory</button>
+        </div>
       </section>}
       {f.list.length > 0 && <section>
         <h2>Saved factories <small>({f.list.length})</small></h2>

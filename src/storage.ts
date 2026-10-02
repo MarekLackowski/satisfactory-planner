@@ -8,6 +8,7 @@ export type Factory = {
   icon: string; // display name, resolved with icon()
   outputs: Settings['outputs'];
   inputs: Settings['inputs'];
+  powerBudget?: number; // MW limit for this factory
   dir: Dir;
   moved: Record<string, Pt>;
   updated: number;

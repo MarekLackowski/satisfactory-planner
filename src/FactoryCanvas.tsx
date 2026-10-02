@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
-import { buildings, extractors, fmt, icon, itemIcon, items, nameOf } from './game';
+import { buildings, extractors, fmt, icon, itemIcon, items, nameOf, TIER_COLORS, type ColorBy } from './game';
 import { buildSim, step, type Sim } from './sim';
 import WiringDiagram from './WiringDiagram';
 import type { Wiring } from './wiring';
@@ -85,18 +85,18 @@ type Props = {
   onMoveNode: (id: string, p: Pt) => void;
   playing: boolean;
   speed: number;
-  bottlenecks: boolean;
+  colorBy: ColorBy;
 };
 
-export default function FactoryCanvas({ layout, fitKey, onMoveNode, playing, speed, bottlenecks }: Props) {
+export default function FactoryCanvas({ layout, fitKey, onMoveNode, playing, speed, colorBy }: Props) {
   const ref = useRef<HTMLCanvasElement>(null);
   const view = useRef({ x: 0, y: 0, k: 1 });
   const time = useRef(0);
   const simRef = useRef<{ layout: Layout; sim: Sim } | null>(null);
-  const opts = useRef({ playing, speed, bottlenecks });
+  const opts = useRef({ playing, speed, colorBy });
   useEffect(() => {
-    opts.current = { playing, speed, bottlenecks };
-  }, [playing, speed, bottlenecks]);
+    opts.current = { playing, speed, colorBy };
+  }, [playing, speed, colorBy]);
   type Tip = { x: number; y: number; lines: string[]; wiring?: Wiring };
   const [tip, setTipState] = useState<(Tip & { style: React.CSSProperties }) | null>(null);
 
@@ -175,7 +175,7 @@ export default function FactoryCanvas({ layout, fitKey, onMoveNode, playing, spe
       }
       for (const s of segs) {
         ctx.lineWidth = s.fluid ? 6 : 5;
-        ctx.strokeStyle = opts.current.bottlenecks ? loadColor(s.rate / capacity(s)) : s.fluid ? col('--pipe') : col('--belt');
+        ctx.strokeStyle = opts.current.colorBy === 'load' ? loadColor(s.rate / capacity(s)) : TIER_COLORS[s.conv[0].mk - 1];
         for (const lane of s.lanes) { stroke(lane); ctx.stroke(); }
       }
       // fluids: liquid streaming through the pipe
@@ -202,6 +202,35 @@ export default function FactoryCanvas({ layout, fitKey, onMoveNode, playing, spe
       }
     };
     const JUNCTION_ICON = { splitter: 'Conveyor Splitter', merger: 'Conveyor Merger', junction: 'Pipeline Junction' } as const;
+    // every belt piece long enough carries its tier, so short pieces are readable without hovering
+    const drawTierBadges = (segs: Segment[], zoom: number) => {
+      // constant on-screen size (~11px) so badges stay readable when zoomed out
+      const z = Math.max(1, 0.85 / zoom);
+      ctx.font = `700 ${8 * z}px system-ui, sans-serif`;
+      ctx.textAlign = 'center';
+      for (const s of segs) {
+        if (s.len < 34 * z) continue;
+        // middle of the longest straight piece
+        let best = 1;
+        for (let i = 2; i < s.pts.length; i++) if (s.cum[i] - s.cum[i - 1] > s.cum[best] - s.cum[best - 1]) best = i;
+        if (s.cum[best] - s.cum[best - 1] < 26 * z) continue;
+        const a = s.pts[best - 1];
+        const b = s.pts[best];
+        const x = (a.x + b.x) / 2;
+        const y = (a.y + b.y) / 2;
+        const t = s.conv[0].mk;
+        ctx.fillStyle = TIER_COLORS[t - 1];
+        ctx.strokeStyle = col('--belt-edge');
+        ctx.lineWidth = 1.5;
+        ctx.beginPath();
+        ctx.roundRect(x - 6.5 * z, y - 6.5 * z, 13 * z, 13 * z, 3 * z);
+        ctx.fill();
+        ctx.stroke();
+        ctx.fillStyle = t >= 5 ? '#111' : '#fff';
+        ctx.fillText(`${s.fluid ? 'P' : ''}${t}`, x, y + 3 * z);
+      }
+      ctx.textAlign = 'left';
+    };
     const drawSim = (sim: Sim) => {
       for (const b of sim.belts) {
         const ic = img(itemIcon(b.seg.item));
@@ -256,6 +285,7 @@ export default function FactoryCanvas({ layout, fitKey, onMoveNode, playing, spe
       layout.nodes.forEach(drawNode);
       drawBelts(layout.segs, time.current);
       drawSim(simRef.current.sim);
+      if (k > 0.2) drawTierBadges(layout.segs, k);
       ctx.font = '600 10px system-ui, sans-serif';
       let labels = labelCache.get(layout);
       if (!labels) labelCache.set(layout, (labels = placeLabels(layout, ctx)));

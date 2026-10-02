@@ -220,43 +220,63 @@ function route(a: Pt, b: Pt, half: number, item: string, blocks: Rect[], hRuns: 
     }
     return true;
   };
+  // how many already placed links a route would cross
+  const crossCount = (pts: Pt[]) => {
+    let n = 0;
+    for (let i = 1; i < pts.length; i++) {
+      const p = pts[i - 1];
+      const q = pts[i];
+      const vert = p.x === q.x;
+      const lo = vert ? Math.min(p.y, q.y) : Math.min(p.x, q.x);
+      const hi = vert ? Math.max(p.y, q.y) : Math.max(p.x, q.x);
+      const at = vert ? p.x : p.y;
+      for (const r of vert ? hRuns : vRuns) {
+        if (r.at > lo + 1 && r.at < hi - 1 && Math.min(r.from, r.to) < at - 1 && Math.max(r.from, r.to) > at + 1) n++;
+      }
+    }
+    return n;
+  };
+  const length = (pts: Pt[]) => pts.slice(1).reduce((t, q, i) => t + Math.abs(q.x - pts[i].x) + Math.abs(q.y - pts[i].y), 0);
+  // fewest crossings first, then fewest bends, then shortest
+  const score = (pts: Pt[]) => crossCount(pts) * 1000 + (pts.length - 2) * 150 + length(pts) * 0.05;
+  let best: Pt[] | null = null;
+  let bestScore = Infinity;
+  const consider = (pts: Pt[]) => {
+    if (length(pts) * 0.05 + (pts.length - 2) * 150 >= bestScore) return; // can't win
+    const sc = score(pts);
+    if (sc < bestScore && free(pts)) {
+      best = pts;
+      bestScore = sc;
+    }
+  };
   const y0 = a.y + STUB;
   const y1 = b.y - STUB;
   const step = 2 * half + 6;
   // 0 bends
-  if (Math.abs(a.x - b.x) < 0.5 && y0 <= y1 && free([a, b])) return [a, { x: a.x, y: b.y }];
-  // 2 bends: horizontal jog at some height between the two groups, middle first
+  if (Math.abs(a.x - b.x) < 0.5 && y0 <= y1) consider([a, { x: a.x, y: b.y }]);
+  // 2 bends: one horizontal jog at some height between the two groups
   if (y0 <= y1) {
     const mid = (y0 + y1) / 2;
     for (let k = 0; k <= (y1 - y0) / step + 1; k++) {
       for (const ym of k ? [mid - k * step, mid + k * step] : [mid]) {
-        if (ym < y0 || ym > y1) continue;
-        const p = [a, { x: a.x, y: ym }, { x: b.x, y: ym }, b];
-        if (free(p)) return p;
+        if (ym >= y0 && ym <= y1) consider([a, { x: a.x, y: ym }, { x: b.x, y: ym }, b]);
       }
     }
   }
-  // 4 bends: leave downwards, run along a free column, come in from above
+  if (best && bestScore < 1000) return best; // nothing crossed: as simple as it gets
+  // 4 bends: leave downwards, run along a free column, come in from above (also to dodge crossings)
   const cols = [...new Set([
     ...hints, a.x, b.x,
     ...blocks.flatMap((r) => [r.x - M - half - 6, r.x + r.w + M + half + 6]),
   ])].filter((x) => Number.isFinite(x)).sort((p, q) => Math.abs(p - (a.x + b.x) / 2) - Math.abs(q - (a.x + b.x) / 2));
-  let best: Pt[] | null = null;
-  let bestLen = Infinity;
   for (const xc of cols.slice(0, 16)) {
     for (let i = 0; i < 4; i++) {
       for (let j = 0; j < 4; j++) {
         const ya = y0 + i * step;
         const yb = y1 - j * step;
-        const p = [a, { x: a.x, y: ya }, { x: xc, y: ya }, { x: xc, y: yb }, { x: b.x, y: yb }, b];
-        const len = Math.abs(ya - a.y) + Math.abs(xc - a.x) + Math.abs(yb - ya) + Math.abs(b.x - xc) + Math.abs(b.y - yb);
-        if (len < bestLen && free(p)) {
-          best = p;
-          bestLen = len;
-        }
+        consider([a, { x: a.x, y: ya }, { x: xc, y: ya }, { x: xc, y: yb }, { x: b.x, y: yb }, b]);
       }
     }
-    if (best) break; // columns are sorted by closeness; the first that works is good enough
   }
   return best;
 }
@@ -277,12 +297,16 @@ const manhattan = (pts: Pt[], dir: Dir) => {
 };
 
 /** auto-arrange groups with dagre (run once per plan / direction) */
-export function arrange(plan: Plan, s: Settings, dir: Dir): Arranged {
+type Variant = { ranker: string; reverse: boolean };
+export function arrange(plan: Plan, s: Settings, dir: Dir, v: Variant = { ranker: 'network-simplex', reverse: false }): Arranged {
   const g = new dagre.graphlib.Graph({ multigraph: true });
-  g.setGraph({ rankdir: dir, nodesep: 70, ranksep: 110, edgesep: 24, marginx: 40, marginy: 40 });
+  g.setGraph({ rankdir: dir, nodesep: 70, ranksep: 110, edgesep: 24, marginx: 40, marginy: 40, ranker: v.ranker });
   g.setDefaultEdgeLabel(() => ({}));
-  for (const gr of plan.groups) g.setNode(gr.id, size(gr, dir, s));
-  for (const e of plan.edges) g.setEdge(e.from, e.to, {}, e.id);
+  // insertion order seeds dagre's crossing reduction, so trying both orders gives different layouts
+  const groups = v.reverse ? [...plan.groups].reverse() : plan.groups;
+  const edges = v.reverse ? [...plan.edges].reverse() : plan.edges;
+  for (const gr of groups) g.setNode(gr.id, size(gr, dir, s));
+  for (const e of edges) g.setEdge(e.from, e.to, {}, e.id);
   dagre.layout(g);
   const pos: Record<string, Pt> = {};
   for (const gr of plan.groups) {
@@ -363,4 +387,43 @@ export function geometry(plan: Plan, s: Settings, arr: Arranged, moved: Record<s
   };
 }
 
-export const layout = (plan: Plan, s: Settings, dir: Dir = 'TB') => geometry(plan, s, arrange(plan, s, dir), {});
+/** how many times links between groups cross each other (+ a small term for total length as tie-break) */
+export function crossings(l: Layout) {
+  type P = { a: Pt; b: Pt; id: string };
+  const h: P[] = [];
+  const v: P[] = [];
+  let len = 0;
+  for (const s of l.segs) {
+    if (!s.edge) continue;
+    len += s.len;
+    for (let i = 1; i < s.pts.length; i++) (s.pts[i].y === s.pts[i - 1].y ? h : v).push({ a: s.pts[i - 1], b: s.pts[i], id: s.edge });
+  }
+  let n = 0;
+  for (const p of h) {
+    const [x1, x2] = [Math.min(p.a.x, p.b.x), Math.max(p.a.x, p.b.x)];
+    for (const q of v) {
+      if (q.id === p.id) continue;
+      const [y1, y2] = [Math.min(q.a.y, q.b.y), Math.max(q.a.y, q.b.y)];
+      if (q.a.x > x1 + 1 && q.a.x < x2 - 1 && p.a.y > y1 + 1 && p.a.y < y2 - 1) n++;
+    }
+  }
+  return n + len / 1e6;
+}
+
+/** auto-arrange: try several layouts and keep the one whose belts cross the least */
+export function autoArrange(plan: Plan, s: Settings, dir: Dir): Arranged {
+  let best: Arranged | null = null;
+  let score = Infinity;
+  for (const ranker of ['network-simplex', 'tight-tree', 'longest-path'])
+    for (const reverse of [false, true]) {
+      const a = arrange(plan, s, dir, { ranker, reverse });
+      const k = crossings(geometry(plan, s, a, {}));
+      if (k < score) {
+        score = k;
+        best = a;
+      }
+    }
+  return best!;
+}
+
+export const layout = (plan: Plan, s: Settings, dir: Dir = 'TB') => geometry(plan, s, autoArrange(plan, s, dir), {});

@@ -52,3 +52,7 @@ export const producible = [...new Set(recipes.flatMap((r) => r.outputs.map((o) =
 export const rawItems = Object.values(items).filter((i) => i.raw).map((i) => i.id);
 
 export const fmt = (n: number, d = 2) => (Math.abs(n) >= 100 ? n.toFixed(1) : n.toFixed(d)).replace(/\.?0+$/, '');
+
+/** belt/pipe tier colours (pipes Mk.1/2 reuse the first two) – distinct from the load colours */
+export const TIER_COLORS = ['#a3a8b3', '#2fb8c7', '#3b82f6', '#8b5cf6', '#e046c8', '#f2f2f2'];
+export type ColorBy = 'load' | 'tier';
