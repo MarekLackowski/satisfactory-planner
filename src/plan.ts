@@ -2,7 +2,7 @@ import {
   belts, buildings, costs, extractors, items, JUNCTION, MERGER, nameOf, pipes, recipeById, SPLITTER, WATER, WATER_PUMP,
   type Conveyor, type Flow,
 } from './game';
-import { minerCap, type Settings, type Solution } from './solver';
+import { minerCap, solve, type Settings, type Solution } from './solver';
 import { describe, wire, type End, type Wiring } from './wiring';
 
 export type Machine = { clock: number; shards: number };
@@ -130,14 +130,27 @@ export function buildPlan(sol: Solution, s: Settings): Plan {
       const { one, cap, total } = minerCap(inp, s);
       if (one > cap + EPS) warnings.push(`${e.name} on ${inp.purity} ${nameOf(inp.item)} makes ${one}/min but best ${fluid ? 'pipe' : 'belt'} carries ${cap}/min – output capped.`);
       const used = take(inp.item, total);
+      // the input says how many extractors are available; place only as many as the factory needs
+      const per = Math.min(one, cap); // what one extractor ships at the chosen clock
+      const need = used / per; // in extractors' worth
+      const n = used > 0.01 ? Math.min(inp.count, Math.ceil(need - 1e-6)) : 0;
+      if (!n) {
+        warnings.push(`${e.name} on ${inp.purity} ${nameOf(inp.item)} isn't needed for these outputs.`);
+        return;
+      }
+      // all at the chosen rate except the last (underclock-last), or all evenly; clocks lowered to what actually ships
+      const share = (i: number) => (s.underclockLast ? (i < n - 1 ? 1 : need - (n - 1)) : need / n);
+      const machines = Array.from({ length: n }, (_, i) => {
+        const clock = inp.clock * ((per * Math.min(1, share(i))) / one);
+        return { clock, shards: Math.max(0, Math.ceil((clock - 1) / 0.5 - EPS)) };
+      });
       const g: Group = {
         id: `ex${k}`, kind: 'extract', label: `${e.name} · ${inp.purity} ${nameOf(inp.item)}`, building: e.id,
-        machines: Array.from({ length: inp.count }, () => ({ clock: inp.clock, shards: Math.max(0, Math.ceil((inp.clock - 1) / 0.5 - EPS)) })),
-        lines: [], inputs: [], outputs: [{ item: inp.item, rate: used }],
-        power: inp.count * e.power * inp.clock ** e.exp,
-        note: total - used > 0.05 ? `${(total - used).toFixed(1)}/min unused` : undefined,
+        machines, lines: [], inputs: [], outputs: [{ item: inp.item, rate: used }],
+        power: machines.reduce((a, m) => a + e.power * m.clock ** e.exp, 0),
+        note: inp.count > n ? `${n} of ${inp.count} available extractors needed (${inp.count - n} spare)` : undefined,
       };
-      buildLines(g, () => ({ inputs: [], outputs: [{ item: inp.item, rate: used / inp.count }] }), s);
+      buildLines(g, (m) => ({ inputs: [], outputs: [{ item: inp.item, rate: (one * m.clock) / inp.clock }] }), s);
       groups.push(g);
     }
   });
@@ -271,5 +284,32 @@ export function buildPlan(sol: Solution, s: Settings): Plan {
   for (const [id, n] of count) for (const c of costs[id] ?? []) cost.set(c.item, (cost.get(c.item) ?? 0) + c.amount * n);
   const power = groups.reduce((a, g) => a + g.power, 0);
   if (shardsLeft.n < 0) warnings.push('Not enough power shards.');
+  if (s.powerBudget && power > s.powerBudget + 0.05) warnings.push(`Uses ${power.toFixed(1)} MW, over the ${s.powerBudget} MW budget (overclocking or the AWESOME Sink draw more than planned).`);
   return { groups, edges, power, cost, buildingCount: count, warnings, wirings };
+}
+
+/**
+ * Solve and plan. With a power budget and a maximized output, the LP's linear power (every machine at 100%)
+ * overestimates the real draw of underclocked machines, so loosen the LP limit until the real plan fills the
+ * budget without going over it.
+ */
+export async function solvePlan(s: Settings): Promise<Plan> {
+  let best = buildPlan(await solve(s), s);
+  const B = s.powerBudget;
+  if (!B || !s.outputs.some((o) => o.maximize)) return best;
+  let lo = B;
+  let hi = B * 1.5;
+  for (let i = 0; i < 7 && best.power < B * 0.995; i++) {
+    const lp = i === 0 ? Math.min(hi, B * (B / Math.max(best.power, 1e-6))) : (lo + hi) / 2;
+    try {
+      const p = buildPlan(await solve({ ...s, powerBudget: lp }), s);
+      if (p.power <= B + 1e-6) {
+        best = p;
+        lo = lp;
+      } else hi = lp;
+    } catch {
+      hi = lp;
+    }
+  }
+  return best;
 }

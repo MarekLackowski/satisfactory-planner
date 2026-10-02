@@ -7,8 +7,8 @@ import {
   belts, buildings, extractors, fmt, icon, itemIcon, items, nameOf, pipes, producible, rawItems, recipes, WATER_PUMP, type Purity,
 } from './game';
 import { arrange, geometry, type Dir, type Pt } from './layout';
-import { buildPlan, type Plan } from './plan';
-import { enabledRecipes, minerRate, solve, type Input, type Settings } from './solver';
+import { solvePlan, type Plan } from './plan';
+import { enabledRecipes, minerRate, type Input, type Settings } from './solver';
 
 const STORE = 'satisfactory-calc-v2';
 const ALL_BUILDINGS = [...Object.keys(buildings), ...Object.keys(extractors)];
@@ -169,7 +169,7 @@ export default function App() {
       }
       setBusy(true);
       try {
-        const plan = buildPlan(await solve(s), s);
+        const plan = await solvePlan(s);
         if (!cancelled) setResult({ plan });
       } catch (e) {
         if (!cancelled) setResult({ error: (e as Error).message });
@@ -321,6 +321,11 @@ export default function App() {
                   </select>
                 </label>
                 <label className="mini">Power shards <input type="number" min={0} step={1} value={s.shards} onChange={(e) => set({ shards: Math.max(0, Math.round(+e.target.value)) })} /></label>
+              </div>
+              <div className="row">
+                <label className="mini" title="Total MW the factory may use, incl. miners/extractors. Combine with Max on an output to get the most out of your power.">Power budget
+                  <input type="number" min={0} step="any" placeholder="no limit" value={s.powerBudget || ''} onChange={(e) => set({ powerBudget: Math.max(0, +e.target.value) })} /> MW
+                </label>
               </div>
             </section>
           </div>

@@ -110,6 +110,34 @@ const near = (a: number, b: number, msg: string) => assert.ok(Math.abs(a - b) < 
   per.forEach((r, i) => assert.ok(Math.abs(r - want[i]) < 1, `lane ${i}: ${r.toFixed(1)}/min, recipe ${want[i]}`));
 }
 
+// 2f) 3 available normal Mk.1 miners but only ~half a miner of ore needed: place 1, underclocked
+{
+  const s: Settings = {
+    ...base, unlimitedRaw: false, beltMk: [1],
+    outputs: [{ item: 'Desc_IronPlate_C', rate: 20, maximize: false }],
+    inputs: [{ kind: 'miner', extractor: 'Build_MinerMk1_C', item: 'Desc_OreIron_C', purity: 'normal', count: 3, clock: 1 }],
+  };
+  const p = buildPlan(await solve(s), s);
+  const g = p.groups.find((x) => x.kind === 'extract')!;
+  assert.equal(g.machines.length, 1);
+  near(g.machines[0].clock, 0.5, 'miner clock'); // 30 ore of 60
+  assert.equal(p.buildingCount.get('Build_MinerMk1_C'), 1);
+  assert.ok(g.note?.includes('2 spare'), g.note);
+}
+
+// 2g) power budget: max Smart Plating from 3 normal Mk.1 miners within 60 MW
+{
+  const s: Settings = {
+    ...base, unlimitedRaw: false, unlimitedWater: false, beltMk: [1, 2], sinkSurplus: false, buildings: ['Build_ConstructorMk1_C', 'Build_SmelterMk1_C', 'Build_AssemblerMk1_C', 'Build_MinerMk1_C'],
+    outputs: [{ item: 'Desc_SpaceElevatorPart_1_C', rate: 1, maximize: true }],
+    inputs: [{ kind: 'miner', extractor: 'Build_MinerMk1_C', item: 'Desc_OreIron_C', purity: 'normal', count: 3, clock: 1 }],
+    powerBudget: 60,
+  };
+  const p = buildPlan(await solve(s), s);
+  assert.ok(p.power <= 60 + 1e-6, `power ${p.power}`);
+  assert.ok(p.power > 50, `budget mostly used: ${p.power}`);
+}
+
 // 3) infeasible: no buildings
 await assert.rejects(solve({ ...base, buildings: [], outputs: [{ item: 'Desc_IronPlate_C', rate: 10, maximize: false }] }));
 

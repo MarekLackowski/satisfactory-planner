@@ -1,5 +1,5 @@
 import highsLoader from 'highs';
-import { belts, buildings, extractors, importWeight, items, pipes, PURITY, recipes, WATER, type Purity, type Recipe } from './game';
+import { belts, buildings, extractors, importWeight, items, pipes, PURITY, recipes, WATER, WATER_PUMP, type Purity, type Recipe } from './game';
 
 export type Output = { item: string; rate: number; maximize: boolean };
 export type Input =
@@ -21,6 +21,7 @@ export type Settings = {
   overclock: number; // max clock for production machines, 1..2.5
   shards: number; // power shards available
   sinkSurplus: boolean;
+  powerBudget?: number; // MW the whole factory may draw (0/undefined = no limit)
 };
 
 export type Solution = {
@@ -106,9 +107,29 @@ export async function solve(s: Settings): Promise<Solution> {
     cost.push(`+ ${eps} s${k}`);
   });
   rs.forEach((r, i) => cost.push(`+ ${w.power * recipePower(r) + (w.buildings + eps)} r${i}`));
+  // MW per 1/min taken from an input: extractors placed by the plan (miners from the inputs, water extractors)
+  const extractMW = (id: string) => {
+    const per = s.inputs
+      .filter((i): i is Extract<Input, { kind: 'miner' }> => i.kind === 'miner' && i.item === id && s.buildings.includes(i.extractor))
+      .map((i) => {
+        const e = extractors[i.extractor];
+        return (e.power * i.clock ** e.exp) / minerCap({ ...i, count: 1 }, s).total;
+      });
+    if (id === WATER && s.unlimitedWater && s.buildings.includes(WATER_PUMP)) per.push(extractors[WATER_PUMP].power / extractors[WATER_PUMP].rate);
+    return per.length ? Math.min(...per) : 0;
+  };
+  // power: machines at 100% (underclocked machines draw less, so the plan stays within) + extraction
+  const powerTerms = [
+    ...rs.map((r, i) => `+ ${recipePower(r)} r${i}`),
+    ...itemIds.flatMap((id, k) => ((avail.get(id) ?? 0) > 0 && extractMW(id) > 0 ? [`+ ${extractMW(id)} i${k}`] : [])),
+  ];
+  itemIds.forEach((id, k) => {
+    if ((avail.get(id) ?? 0) > 0 && extractMW(id) > 0) cost.push(`+ ${w.power * extractMW(id)} i${k}`);
+  });
   for (const o of max) term(o.item, -o.rate || -1, 't');
 
   const constraints = itemIds.map((id, k) => `c${k}: ${rows.get(id)!.join(' ')} = ${fixed.get(id) ?? 0}`);
+  if (s.powerBudget && s.powerBudget > 0) constraints.push(`pw: ${powerTerms.join(' ')} <= ${s.powerBudget}`);
   const lp = (obj: string, extra: string[] = []) =>
     `${obj}\nSubject To\n${[...constraints, ...extra].join('\n')}\nBounds\n${bounds.join('\n')}\nEnd`;
 
@@ -118,7 +139,7 @@ export async function solve(s: Settings): Promise<Solution> {
     if (res.Status !== 'Optimal') {
       throw new Error(
         res.Status === 'Infeasible'
-          ? 'No feasible factory: inputs, unlocked recipes or buildings cannot produce the requested outputs.'
+          ? `No feasible factory: inputs, unlocked recipes or buildings cannot produce the requested outputs${s.powerBudget ? ' within the power budget' : ''}.`
           : res.Status === 'Unbounded'
             ? 'Output is unbounded – limit the raw resources (turn off "unlimited") to maximize.'
             : `Solver status: ${res.Status}`,
