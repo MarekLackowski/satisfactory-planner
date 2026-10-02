@@ -39,7 +39,7 @@ const avgWorld = Object.values(WORLD).reduce((a, b) => a + b, 0) / Object.keys(W
 export const importWeight = (id: string) =>
   id === WATER ? 0.001 : WORLD[id] ? avgWorld / WORLD[id] : 1 + items[id].sink / 100;
 
-export const icon = (name: string) => `${import.meta.env.BASE_URL}icons/${name.replace(/[^\w.-]+/g, '_')}.png`;
+export const icon = (name: string) => `${import.meta.env?.BASE_URL ?? "/"}icons/${name.replace(/[^\w.-]+/g, '_')}.png`;
 export const itemIcon = (id: string) => icon(items[id]?.name ?? id);
 const EXTRA: Record<string, string> = {
   [SPLITTER]: 'Conveyor Splitter', [MERGER]: 'Conveyor Merger', [JUNCTION]: 'Pipeline Junction',

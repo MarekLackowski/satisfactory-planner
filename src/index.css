@@ -199,7 +199,7 @@ aside footer .row { margin-bottom: 4px; }
 .wiring figcaption { font-size: 11px; color: var(--muted); margin-top: 4px; }
 .recipe details { margin-top: 4px; font-size: 12px; color: var(--muted); }
 .recipe summary { cursor: pointer; }
-.guide { grid-template-columns: repeat(auto-fill, minmax(530px, 1fr)); }
+.guide { grid-template-columns: repeat(auto-fill, minmax(600px, 1fr)); }
 /* the side panel keeps its width when a list opens or content grows (no jumping) */
 .panel, .summary { scrollbar-gutter: stable; }
 .unit.dim { opacity: 0.5; }
