@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 import { buildings, extractors, recipes } from '../src/game';
 import { layout } from '../src/layout';
 import { buildPlan } from '../src/plan';
+import { buildSim, step } from '../src/sim';
 import { solve, type Settings } from '../src/solver';
 
 const base: Settings = {
@@ -50,6 +51,19 @@ const near = (a: number, b: number, msg: string) => assert.ok(Math.abs(a - b) < 
   const sol = await solve(s);
   near(sol.imports.get('Desc_OreIron_C')!, 60, 'capped miner');
   assert.ok(!buildPlan(sol, s).groups.some((g) => g.kind === 'input'), 'no phantom input');
+}
+
+// 2c) item simulation delivers the planned rate through manifolds, splitters and parallel belts
+{
+  const s: Settings = { ...base, beltMk: [1], outputs: [{ item: 'Desc_IronPlateReinforced_C', rate: 10, maximize: false }] };
+  const l = layout(buildPlan(await solve(s), s), s);
+  const sim = buildSim(l);
+  const out = sim.belts.filter((b) => b.seg.edge?.includes('>out_'));
+  const before = out.reduce((a, b) => a + b.sunk, 0);
+  for (let t = 0; t < 600; t += 0.05) step(sim, 0.05);
+  const per = ((out.reduce((a, b) => a + b.sunk, 0) - before) / 600) * 60;
+  assert.ok(Math.abs(per - 10) < 0.5, `simulated output ${per.toFixed(2)}/min, planned 10`);
+  for (const b of sim.belts) for (const lane of b.lanes) for (let i = 1; i < lane.length; i++) assert.ok(lane[i - 1].d - lane[i].d >= 14 - 1e-6, 'items overlap');
 }
 
 // 3) infeasible: no buildings

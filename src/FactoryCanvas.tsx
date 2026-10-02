@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
 import { buildings, extractors, fmt, icon, itemIcon, items, nameOf } from './game';
+import { buildSim, step, type Sim } from './sim';
 import { LANE_GAP, titleOf, type Layout, type NodeBox, type Path, type Pt, type Segment } from './layout';
 
 const imgCache = new Map<string, HTMLImageElement>();
@@ -89,6 +90,7 @@ export default function FactoryCanvas({ layout, fitKey, onMoveNode, playing, spe
   const ref = useRef<HTMLCanvasElement>(null);
   const view = useRef({ x: 0, y: 0, k: 1 });
   const time = useRef(0);
+  const simRef = useRef<{ layout: Layout; sim: Sim } | null>(null);
   const opts = useRef({ playing, speed, bottlenecks });
   useEffect(() => {
     opts.current = { playing, speed, bottlenecks };
@@ -159,44 +161,35 @@ export default function FactoryCanvas({ layout, fitKey, onMoveNode, playing, spe
       ctx.beginPath();
       p.pts.forEach((q, i) => (i ? ctx.lineTo(q.x, q.y) : ctx.moveTo(q.x, q.y)));
     };
-    const drawSeg = (s: Segment, t: number) => {
-      const load = s.rate / capacity(s);
-      const w = s.fluid ? 6 : 5;
-      const v = 20 + s.conv[0].rate * 0.05; // px/s, faster tiers move faster
-      const perLane = s.rate / s.lanes.length;
+    // belts are drawn in passes over the whole network (all outlines, then all surfaces) so joints have no seams
+    const drawBelts = (segs: Segment[], t: number) => {
       ctx.lineJoin = 'round';
-      for (const lane of s.lanes) {
-        stroke(lane);
-        ctx.lineWidth = w + 2;
+      ctx.lineCap = 'round';
+      for (const s of segs) {
+        ctx.lineWidth = (s.fluid ? 6 : 5) + 2.5;
         ctx.strokeStyle = col('--belt-edge');
-        ctx.stroke();
-        ctx.lineWidth = w;
-        ctx.strokeStyle = opts.current.bottlenecks ? loadColor(load) : s.fluid ? col('--pipe') : col('--belt');
-        ctx.stroke();
-        if (s.fluid) {
-          const c = items[s.item].color ?? [80, 140, 255];
-          ctx.setLineDash([6, 8]);
-          ctx.lineDashOffset = -t * v;
-          ctx.lineWidth = w - 3;
-          ctx.strokeStyle = `rgb(${c.join(',')})`;
-          ctx.stroke();
-          ctx.setLineDash([]);
-          continue;
-        }
-        if (perLane <= 0 || lane.len < 1) continue;
-        const spacing = Math.max(15, v / (perLane / 60));
-        const ic = img(itemIcon(s.item));
-        for (let d = (t * v) % spacing; d < lane.len; d += spacing) {
-          const p = pointAt(lane, d);
-          if (ic) ctx.drawImage(ic, p.x - 6, p.y - 6, 12, 12);
-          else {
-            ctx.fillStyle = col('--accent');
-            ctx.fillRect(p.x - 3, p.y - 3, 6, 6);
-          }
-        }
+        for (const lane of s.lanes) { stroke(lane); ctx.stroke(); }
       }
-      if (s.lanes.length > 1) {
-        // splitter at the start, merger at the end: a bar across all parallel belts
+      for (const s of segs) {
+        ctx.lineWidth = s.fluid ? 6 : 5;
+        ctx.strokeStyle = opts.current.bottlenecks ? loadColor(s.rate / capacity(s)) : s.fluid ? col('--pipe') : col('--belt');
+        for (const lane of s.lanes) { stroke(lane); ctx.stroke(); }
+      }
+      // fluids: liquid streaming through the pipe
+      ctx.lineCap = 'butt';
+      for (const s of segs) {
+        if (!s.fluid) continue;
+        const c = items[s.item].color ?? [80, 140, 255];
+        ctx.setLineDash([6, 8]);
+        ctx.lineDashOffset = -t * (s.conv[0].rate / 60) * 6;
+        ctx.lineWidth = 3;
+        ctx.strokeStyle = `rgb(${c.join(',')})`;
+        for (const lane of s.lanes) { stroke(lane); ctx.stroke(); }
+        ctx.setLineDash([]);
+      }
+      for (const s of segs) {
+        if (s.lanes.length < 2) continue;
+        // parallel belts split at the start and merge at the end: a bar across them
         const span = (s.lanes.length - 1) * LANE_GAP + 10;
         for (const [p, q] of [[s.pts[0], s.pts[1]], [s.pts[s.pts.length - 1], s.pts[s.pts.length - 2]]]) {
           const horiz = Math.abs(q.x - p.x) > Math.abs(q.y - p.y);
@@ -205,11 +198,44 @@ export default function FactoryCanvas({ layout, fitKey, onMoveNode, playing, spe
         }
       }
     };
+    const drawSim = (sim: Sim) => {
+      for (const j of sim.junctions) {
+        ctx.fillStyle = col('--machine');
+        ctx.strokeStyle = j.kind === 'splitter' ? col('--accent') : col('--muted');
+        ctx.lineWidth = 1.5;
+        ctx.beginPath();
+        ctx.roundRect(j.x - 5, j.y - 5, 10, 10, 2);
+        ctx.fill();
+        ctx.stroke();
+      }
+      for (const b of sim.belts) {
+        const ic = img(itemIcon(b.seg.item));
+        b.lanes.forEach((lane, k) => {
+          const path = b.seg.lanes[k];
+          const scale = path.len / (b.seg.len || 1);
+          for (const it of lane) {
+            const p = pointAt(path, it.d * scale);
+            if (ic) ctx.drawImage(ic, p.x - 6, p.y - 6, 12, 12);
+            else {
+              ctx.fillStyle = col('--accent');
+              ctx.fillRect(p.x - 3, p.y - 3, 6, 6);
+            }
+          }
+        });
+      }
+    };
 
     const frame = (now: number) => {
       const dt = Math.min(0.1, (now - last) / 1000);
       last = now;
-      if (opts.current.playing) time.current += dt * opts.current.speed;
+      const layout = layoutRef.current;
+      if (simRef.current?.layout !== layout) simRef.current = { layout, sim: buildSim(layout, simRef.current?.sim) };
+      if (opts.current.playing) {
+        time.current += dt * opts.current.speed;
+        // fixed sub-steps keep fast speeds stable
+        const n = Math.ceil((dt * opts.current.speed) / 0.04);
+        for (let i = 0; i < n; i++) step(simRef.current.sim, (dt * opts.current.speed) / n);
+      }
       const dpr = devicePixelRatio || 1;
       if (c.width !== c.clientWidth * dpr || c.height !== c.clientHeight * dpr) {
         c.width = c.clientWidth * dpr;
@@ -220,11 +246,9 @@ export default function FactoryCanvas({ layout, fitKey, onMoveNode, playing, spe
       ctx.fillStyle = col('--canvas');
       ctx.fillRect(0, 0, c.clientWidth, c.clientHeight);
       ctx.setTransform(dpr * k, 0, 0, dpr * k, dpr * x, dpr * y);
-      const layout = layoutRef.current;
       layout.nodes.forEach(drawNode);
-      // edges between groups are drawn under internal belts so manifolds stay readable
-      layout.segs.filter((s) => s.edge).forEach((s) => drawSeg(s, time.current));
-      layout.segs.filter((s) => !s.edge).forEach((s) => drawSeg(s, time.current));
+      drawBelts(layout.segs, time.current);
+      drawSim(simRef.current.sim);
       ctx.font = '600 10px system-ui, sans-serif';
       let labels = labelCache.get(layout);
       if (!labels) labelCache.set(layout, (labels = placeLabels(layout, ctx)));
