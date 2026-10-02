@@ -12,7 +12,7 @@ export const ITEM_GAP = 14; // px between items on a belt running at full capaci
 type Item = { d: number }; // distance travelled along the belt
 export type Belt = {
   seg: Segment;
-  v: number; // px/s
+  v: number[]; // px/s per parallel belt (tiers can differ)
   next: number[];
   prev: number[];
   lanes: Item[][]; // one queue per parallel belt, front (largest d) first
@@ -36,7 +36,7 @@ const endKey = (s: Segment) => s.join?.end ?? key(s.pts[s.pts.length - 1], s.ite
 export function buildSim(layout: Layout, old?: Sim): Sim {
   const belts: Belt[] = layout.segs
     .filter((s) => !s.fluid && s.len > 0.5)
-    .map((seg) => ({ seg, v: (seg.conv[0].rate / 60) * ITEM_GAP, next: [], prev: [], lanes: seg.lanes.map(() => []), sent: [], total: 0, acc: 0, rr: 0, sunk: 0, fed: seg.lanes.map(() => 0) }));
+    .map((seg) => ({ seg, v: seg.conv.map((c) => (c.rate / 60) * ITEM_GAP), next: [], prev: [], lanes: seg.lanes.map(() => []), sent: [], total: 0, acc: 0, rr: 0, sunk: 0, fed: seg.lanes.map(() => 0) }));
   const starts = new Map<string, number[]>();
   belts.forEach((b, i) => {
     const k = startKey(b.seg);
@@ -170,7 +170,7 @@ export function step(sim: Sim, dt: number) {
     b.lanes.forEach((lane, li) => {
       for (let i = 0; i < lane.length; i++) {
         const it = lane[i];
-        let d = it.d + b.v * dt;
+        let d = it.d + b.v[li] * dt;
         if (i > 0) d = Math.min(d, lane[i - 1].d - ITEM_GAP);
         if (i === 0 && d >= len) {
           // reached the end: into a machine/output (sink) or onto the next belt

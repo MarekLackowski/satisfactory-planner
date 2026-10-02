@@ -2,7 +2,7 @@
 import assert from 'node:assert/strict';
 import { buildings, extractors, recipes } from '../src/game';
 import { layout } from '../src/layout';
-import { buildPlan } from '../src/plan';
+import { buildPlan, conveyorFor, solvePlan } from '../src/plan';
 import { buildSim, step } from '../src/sim';
 import { solve, type Settings } from '../src/solver';
 
@@ -136,6 +136,25 @@ const near = (a: number, b: number, msg: string) => assert.ok(Math.abs(a - b) < 
   const p = buildPlan(await solve(s), s);
   assert.ok(p.power <= 60 + 1e-6, `power ${p.power}`);
   assert.ok(p.power > 50, `budget mostly used: ${p.power}`);
+}
+
+// 2h) cheapest belts: every parallel belt gets the tier of its own flow (rotor screws: 100/min Mk.2 next to 33/min Mk.1)
+{
+  const s: Settings = {
+    ...base, unlimitedRaw: false, beltMk: [1, 2], cheapBelts: true, alts: ['Recipe_Alternate_Screw_C'],
+    buildings: ['Build_ConstructorMk1_C', 'Build_SmelterMk1_C', 'Build_AssemblerMk1_C', 'Build_MinerMk1_C'],
+    outputs: [{ item: 'Desc_Rotor_C', rate: 1, maximize: true }],
+    inputs: [{ kind: 'miner', extractor: 'Build_MinerMk1_C', item: 'Desc_OreIron_C', purity: 'normal', count: 1, clock: 1 }],
+  };
+  const l = layout(await solvePlan(s), s);
+  for (const sg of l.segs) {
+    sg.conv.forEach((c, i) => {
+      assert.ok(sg.laneRates[i] <= c.rate + 0.01, `overloaded belt: ${sg.laneRates[i]} on Mk.${c.mk}`);
+      assert.equal(c.mk, conveyorFor(sg.laneRates[i], sg.fluid, s).mk, `${sg.edge ?? 'internal'}: ${sg.laneRates[i]}/min should use the cheapest tier`);
+    });
+  }
+  const screws = l.segs.find((x) => x.edge?.includes('Desc_IronScrew_C') && x.edge.includes('Rotor'))!;
+  assert.deepEqual(screws.conv.map((c) => c.mk).sort(), [1, 2]);
 }
 
 // 3) infeasible: no buildings

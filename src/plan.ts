@@ -251,9 +251,12 @@ export function buildPlan(sol: Solution, s: Settings): Plan {
       const links = edges.filter((e) => e.from === g.id && e.item === f.item);
       if (!links.length) return;
       const src: End[] = g.lines.map((ln, l) => ({ label: lineName(g, l), icon: nameOf(g.building!), rate: ln.outputs[j].segs[ln.outputs[j].segs.length - 1], lanes: 1, cap: Infinity, ref: `line:${l}` }));
-      const dst: End[] = links.map((e) => ({ label: byId[e.to].label, icon: groupIcon(byId[e.to], f.item), rate: e.rate, lanes: e.belts.length, cap: e.belts[0].rate, ref: `edge:${e.id}` }));
+      const dst: End[] = links.map((e) => ({ label: byId[e.to].label, icon: groupIcon(byId[e.to], f.item), rate: e.rate, lanes: e.belts.length, cap: maxConveyor(items[e.item].fluid, s).rate, ref: `edge:${e.id}` }));
       const pieces = wire(src, dst);
-      links.forEach((e, k) => (e.laneRates = e.belts.map((_, ln) => pieces.filter((p) => p.to === k && p.lane === ln).reduce((s2, p) => s2 + p.rate, 0))));
+      links.forEach((e, k) => {
+        e.laneRates = e.belts.map((_, ln) => pieces.filter((p) => p.to === k && p.lane === ln).reduce((s2, p) => s2 + p.rate, 0));
+        e.belts = e.laneRates.map((r) => conveyorFor(r, items[e.item].fluid, s)); // e.g. 100/min on Mk.2 next to 33/min on Mk.1
+      });
       wirings.push(describe(`${g.label}: ${nameOf(f.item)} out`, `out:${g.id}:${f.item}`, src, dst, pieces));
     });
   }

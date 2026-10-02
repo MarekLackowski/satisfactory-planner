@@ -16,7 +16,10 @@ function img(src: string) {
   return i.complete && i.naturalWidth ? i : null;
 }
 
-const capacity = (s: Segment) => s.conv[0].rate * s.conv.length;
+const capacity = (s: Segment) => s.conv.reduce((a, c) => a + c.rate, 0);
+/** "Mk.2" or "Mk.2 + Mk.1" (2× when equal) */
+const tiers = (s: Segment) =>
+  s.conv.every((c) => c.mk === s.conv[0].mk) ? `${s.conv.length > 1 ? `${s.conv.length}× ` : ''}Mk.${s.conv[0].mk}` : s.conv.map((c) => `Mk.${c.mk}`).join(' + ');
 const loadColor = (load: number) =>
   load > 1 + 1e-6 ? '#e5484d' : load > 0.95 ? '#f5a524' : load > 0.7 ? '#c9b33a' : '#3fa66a';
 
@@ -54,7 +57,7 @@ function placeLabels(layout: Layout, ctx: CanvasRenderingContext2D): Label[] {
   const out: Label[] = [];
   for (const s of layout.segs) {
     if (!s.edge) continue;
-    const text = `${s.conv.length > 1 ? `${s.conv.length}× ` : ''}Mk.${s.conv[0].mk} · ${fmt(s.rate)}/min`;
+    const text = `${tiers(s)} · ${fmt(s.rate)}/min`;
     const w = ctx.measureText(text).width + 6;
     const h = 14;
     const side = ((s.lanes.length - 1) * LANE_GAP) / 2 + 5;
@@ -175,8 +178,12 @@ export default function FactoryCanvas({ layout, fitKey, onMoveNode, playing, spe
       }
       for (const s of segs) {
         ctx.lineWidth = s.fluid ? 6 : 5;
-        ctx.strokeStyle = opts.current.colorBy === 'load' ? loadColor(s.rate / capacity(s)) : TIER_COLORS[s.conv[0].mk - 1];
-        for (const lane of s.lanes) { stroke(lane); ctx.stroke(); }
+        s.lanes.forEach((lane, k) => {
+          const c = s.conv[k];
+          ctx.strokeStyle = opts.current.colorBy === 'load' ? loadColor(s.laneRates[k] / c.rate) : TIER_COLORS[c.mk - 1];
+          stroke(lane);
+          ctx.stroke();
+        });
       }
       // fluids: liquid streaming through the pipe
       ctx.lineCap = 'butt';
@@ -184,10 +191,13 @@ export default function FactoryCanvas({ layout, fitKey, onMoveNode, playing, spe
         if (!s.fluid) continue;
         const c = items[s.item].color ?? [80, 140, 255];
         ctx.setLineDash([6, 8]);
-        ctx.lineDashOffset = -t * (s.conv[0].rate / 60) * 6;
         ctx.lineWidth = 3;
         ctx.strokeStyle = `rgb(${c.join(',')})`;
-        for (const lane of s.lanes) { stroke(lane); ctx.stroke(); }
+        s.lanes.forEach((lane, k) => {
+          ctx.lineDashOffset = -t * (s.conv[k].rate / 60) * 6;
+          stroke(lane);
+          ctx.stroke();
+        });
         ctx.setLineDash([]);
       }
       for (const s of segs) {
@@ -216,18 +226,23 @@ export default function FactoryCanvas({ layout, fitKey, onMoveNode, playing, spe
         if (s.cum[best] - s.cum[best - 1] < 26 * z) continue;
         const a = s.pts[best - 1];
         const b = s.pts[best];
-        const x = (a.x + b.x) / 2;
-        const y = (a.y + b.y) / 2;
-        const t = s.conv[0].mk;
-        ctx.fillStyle = TIER_COLORS[t - 1];
-        ctx.strokeStyle = col('--belt-edge');
-        ctx.lineWidth = 1.5;
-        ctx.beginPath();
-        ctx.roundRect(x - 6.5 * z, y - 6.5 * z, 13 * z, 13 * z, 3 * z);
-        ctx.fill();
-        ctx.stroke();
-        ctx.fillStyle = t >= 5 ? '#111' : '#fff';
-        ctx.fillText(`${s.fluid ? 'P' : ''}${t}`, x, y + 3 * z);
+        // one badge per parallel belt, side by side along the belt
+        const horiz = a.y === b.y;
+        s.conv.forEach((c, k) => {
+          const shift = (k - (s.conv.length - 1) / 2) * 14 * z;
+          const x = (a.x + b.x) / 2 + (horiz ? shift : 0);
+          const y = (a.y + b.y) / 2 + (horiz ? 0 : shift);
+          const t = c.mk;
+          ctx.fillStyle = TIER_COLORS[t - 1];
+          ctx.strokeStyle = col('--belt-edge');
+          ctx.lineWidth = 1.5;
+          ctx.beginPath();
+          ctx.roundRect(x - 6.5 * z, y - 6.5 * z, 13 * z, 13 * z, 3 * z);
+          ctx.fill();
+          ctx.stroke();
+          ctx.fillStyle = t >= 5 ? '#111' : '#fff';
+          ctx.fillText(`${s.fluid ? 'P' : ''}${t}`, x, y + 3 * z);
+        });
       }
       ctx.textAlign = 'left';
     };
@@ -382,8 +397,9 @@ export default function FactoryCanvas({ layout, fitKey, onMoveNode, playing, spe
         x: p.sx, y: p.sy,
         lines: [
           nameOf(seg.item),
-          `${fmt(seg.rate)} /min on ${seg.conv.length > 1 ? `${seg.conv.length}× ` : ''}${seg.conv[0].name}`,
-          `Load ${fmt((seg.rate / cap) * 100, 1)}% of ${fmt(cap)} /min`,
+          ...(seg.conv.length > 1
+            ? seg.conv.map((c, k) => `Belt ${k + 1}: ${fmt(seg.laneRates[k])}/min on ${c.name} (${fmt((seg.laneRates[k] / c.rate) * 100, 1)}%)`)
+            : [`${fmt(seg.rate)} /min on ${seg.conv[0].name}`, `Load ${fmt((seg.rate / cap) * 100, 1)}% of ${fmt(cap)} /min`]),
         ],
       });
     }

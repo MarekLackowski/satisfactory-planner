@@ -1,7 +1,7 @@
 import dagre from '@dagrejs/dagre';
 import { items, type Conveyor } from './game';
 import { buildings, extractors } from './game';
-import { conveyorsFor, type Group, type Plan } from './plan';
+import { conveyorFor, conveyorsFor, type Group, type Plan } from './plan';
 import type { Wiring } from './wiring';
 import type { Settings } from './solver';
 
@@ -13,7 +13,8 @@ export type Segment = {
   pts: Pt[];
   item: string;
   rate: number;
-  conv: Conveyor[]; // parallel conveyors on this segment
+  conv: Conveyor[]; // parallel conveyors on this segment, each with the tier its own flow needs
+  laneRates: number[]; // flow on each parallel conveyor
   fluid: boolean;
   len: number;
   cum: number[]; // cumulative length at each point
@@ -65,12 +66,14 @@ function offset(pts: Pt[], d: number): Pt[] {
   });
 }
 
-function segment(raw: Pt[], item: string, rate: number, s: Settings, edge?: string, join?: Segment['join']): Segment {
+function segment(raw: Pt[], item: string, rate: number, s: Settings, edge?: string, join?: Segment['join'], laneRates?: number[]): Segment {
   const pts = raw.filter((p, i) => !i || p.x !== raw[i - 1].x || p.y !== raw[i - 1].y);
   const fluid = items[item].fluid;
-  const conv = conveyorsFor(rate, fluid, s);
+  const n = laneRates?.length ?? conveyorsFor(rate, fluid, s).length;
+  const rates = laneRates ?? Array(n).fill(rate / n);
+  const conv = rates.map((r) => conveyorFor(r, fluid, s));
   const lanes = conv.map((_, k) => path(offset(pts, (k - (conv.length - 1) / 2) * LANE_GAP)));
-  return { ...path(pts), lanes, item, rate, fluid, conv, edge, join };
+  return { ...path(pts), lanes, item, rate, fluid, conv, laneRates: rates, edge, join };
 }
 
 export const titleOf = (g: Group) =>
@@ -375,7 +378,7 @@ export function geometry(plan: Plan, s: Settings, arr: Arranged, moved: Record<s
       if (p.x === q.x) vRuns.push({ at: p.x, from: p.y, to: q.y, item: e.item, half });
       else hRuns.push({ at: p.y, from: p.x, to: q.x, item: e.item, half });
     }
-    segs.push(segment(pts, e.item, e.rate, s, e.id, { start: `out:${e.from}:${e.item}`, end: `in:${e.to}:${e.item}` }));
+    segs.push(segment(pts, e.item, e.rate, s, e.id, { start: `out:${e.from}:${e.item}`, end: `in:${e.to}:${e.item}` }, e.laneRates));
   }
   const x = Math.min(...nodes.map((n) => n.x)) - 40;
   const y = Math.min(...nodes.map((n) => n.y)) - 40;
