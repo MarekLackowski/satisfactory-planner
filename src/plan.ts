@@ -3,6 +3,7 @@ import {
   type Conveyor, type Flow,
 } from './game';
 import { minerCap, type Settings, type Solution } from './solver';
+import { describe, wire, type End, type Wiring } from './wiring';
 
 export type Machine = { clock: number; shards: number };
 export type Line = {
@@ -23,7 +24,10 @@ export type Group = {
   power: number;
   note?: string;
 };
-export type Edge = { id: string; from: string; to: string; item: string; rate: number; belts: Conveyor[] };
+export type Edge = {
+  id: string; from: string; to: string; item: string; rate: number; belts: Conveyor[];
+  laneRates: number[]; // flow on each parallel belt (set by the wiring at the producer's output)
+};
 export type Plan = {
   groups: Group[];
   edges: Edge[];
@@ -31,6 +35,7 @@ export type Plan = {
   cost: Map<string, number>;
   buildingCount: Map<string, number>;
   warnings: string[];
+  wirings: Wiring[]; // build recipe for every group port where belts branch, join or continue
 };
 
 const EPS = 1e-6;
@@ -201,7 +206,8 @@ export function buildPlan(sol: Solution, s: Settings): Plan {
         const v = Math.min(c.left, prods[p].left);
         if (v > EPS) {
           const from = prods[p].g.id;
-          edges.push({ id: `${from}>${c.g.id}:${item}`, from, to: c.g.id, item, rate: v, belts: conveyorsFor(v, items[item].fluid, s) });
+          const bs = conveyorsFor(v, items[item].fluid, s);
+          edges.push({ id: `${from}>${c.g.id}:${item}`, from, to: c.g.id, item, rate: v, belts: bs, laneRates: bs.map(() => v / bs.length) });
         }
         c.left -= v;
         prods[p].left -= v;
@@ -220,22 +226,49 @@ export function buildPlan(sol: Solution, s: Settings): Plan {
       for (const f of line.outputs) add(items[f.item].fluid ? JUNCTION : MERGER, line.machines.length - 1);
     }
   }
-  // at each port the links (with their parallel belts) meet one belt per line: nothing is needed when n belts
-  // just continue as n belts, otherwise splitters/mergers to go from one count to the other
-  const portJoins = (links: Edge[], lines: number, kind: string, item: string) => {
-    const belts = links.reduce((a, e) => a + e.belts.length, 0);
-    const sides = Math.max(lines, 1);
-    if (links.length <= 1 && belts === sides) return;
-    add(items[item].fluid ? JUNCTION : kind, Math.max(belts, sides) - 1);
-  };
+  // ---- port wiring: exactly which belt goes where at every group port with production lines
+  const byId = Object.fromEntries(groups.map((g) => [g.id, g]));
+  const lineName = (g: Group, l: number) => `${g.lines.length > 1 ? `Line ${l + 1}` : 'Line'} (${g.lines[l].machines.length}× ${nameOf(g.building!)})`;
+  const wirings: Wiring[] = [];
+  // outputs first: they fix how much each parallel belt of a link carries, which the consumer's input then uses
   for (const g of groups) {
-    for (const f of g.inputs) portJoins(edges.filter((e) => e.to === g.id && e.item === f.item), g.lines.length, g.lines.length > 1 ? SPLITTER : MERGER, f.item);
-    for (const f of g.outputs) portJoins(edges.filter((e) => e.from === g.id && e.item === f.item), g.lines.length, edges.filter((e) => e.from === g.id && e.item === f.item).length > 1 ? SPLITTER : MERGER, f.item);
+    if (!g.lines.length) continue;
+    g.outputs.forEach((f, j) => {
+      const links = edges.filter((e) => e.from === g.id && e.item === f.item);
+      if (!links.length) return;
+      const src: End[] = g.lines.map((ln, l) => ({ label: lineName(g, l), rate: ln.outputs[j].segs[ln.outputs[j].segs.length - 1], lanes: 1, cap: Infinity, ref: `line:${l}` }));
+      const dst: End[] = links.map((e) => ({ label: byId[e.to].label, rate: e.rate, lanes: e.belts.length, cap: e.belts[0].rate, ref: `edge:${e.id}` }));
+      const pieces = wire(src, dst);
+      links.forEach((e, k) => (e.laneRates = e.belts.map((_, ln) => pieces.filter((p) => p.to === k && p.lane === ln).reduce((s2, p) => s2 + p.rate, 0))));
+      wirings.push(describe(`${g.label}: ${nameOf(f.item)} out`, `out:${g.id}:${f.item}`, src, dst, pieces));
+    });
+  }
+  for (const g of groups) {
+    if (!g.lines.length) continue;
+    g.inputs.forEach((f, i) => {
+      const links = edges.filter((e) => e.to === g.id && e.item === f.item);
+      if (!links.length) return;
+      const src: End[] = links.flatMap((e) =>
+        e.belts.map((_, k) => ({ label: `${byId[e.from].label} belt${e.belts.length > 1 ? ` ${k + 1}/${e.belts.length}` : ''}`, rate: e.laneRates[k], lanes: 1, cap: Infinity, ref: `edge:${e.id}#${k}` })));
+      const dst: End[] = g.lines.map((ln, l) => ({ label: lineName(g, l), rate: ln.inputs[i].segs[0], lanes: 1, cap: Infinity, ref: `line:${l}` }));
+      wirings.push(describe(`${g.label}: ${nameOf(f.item)} in`, `in:${g.id}:${f.item}`, src.filter((x) => x.rate > 0.01), dst, wire(src.filter((x) => x.rate > 0.01), dst)));
+    });
+  }
+  for (const w of wirings) {
+    const fluid = items[w.key.slice(w.key.lastIndexOf(':') + 1)]?.fluid;
+    add(fluid ? JUNCTION : SPLITTER, w.splitters);
+    add(fluid ? JUNCTION : MERGER, w.mergers);
+  }
+  // input/output boxes have no lines: several links leaving or arriving need a splitter/merger chain
+  for (const g of groups) {
+    if (g.lines.length) continue;
+    for (const f of g.outputs) add(items[f.item].fluid ? JUNCTION : SPLITTER, edges.filter((e) => e.from === g.id && e.item === f.item).length - 1);
+    for (const f of g.inputs) add(items[f.item].fluid ? JUNCTION : MERGER, edges.filter((e) => e.to === g.id && e.item === f.item).length - 1);
   }
 
   const cost = new Map<string, number>();
   for (const [id, n] of count) for (const c of costs[id] ?? []) cost.set(c.item, (cost.get(c.item) ?? 0) + c.amount * n);
   const power = groups.reduce((a, g) => a + g.power, 0);
   if (shardsLeft.n < 0) warnings.push('Not enough power shards.');
-  return { groups, edges, power, cost, buildingCount: count, warnings };
+  return { groups, edges, power, cost, buildingCount: count, warnings, wirings };
 }

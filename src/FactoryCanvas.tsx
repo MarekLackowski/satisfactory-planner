@@ -297,6 +297,12 @@ export default function FactoryCanvas({ layout, fitKey, onMoveNode, playing, spe
     drag.current = null;
     grab.current = null;
   };
+  // splitter/merger blocks at ports carry their build recipe
+  const junctionAt = (p: Pt) =>
+    simRef.current?.sim.junctions.find((j) => j.wiring && Math.abs(j.x - p.x) < 11 && Math.abs(j.y - p.y) < 11);
+  const recipeTip = (j: NonNullable<ReturnType<typeof junctionAt>>, p: { sx: number; sy: number }) => ({
+    x: p.sx, y: p.sy, lines: [`How to build: ${j.wiring!.title}`, ...j.wiring!.steps.map((s) => `• ${s}`)],
+  });
   const nodeAt = (p: Pt) => layout.nodes.find((n) => p.x >= n.x && p.x <= n.x + n.w && p.y >= n.y && p.y <= n.y + n.h);
   const onMove = (e: React.PointerEvent) => {
     if (pointers.current.has(e.pointerId)) pointers.current.set(e.pointerId, { x: e.clientX, y: e.clientY });
@@ -320,6 +326,11 @@ export default function FactoryCanvas({ layout, fitKey, onMoveNode, playing, spe
       return;
     }
     const p = toWorld(e);
+    const jn = junctionAt(p);
+    if (jn) {
+      ref.current!.style.cursor = 'help';
+      return setTip(recipeTip(jn, p));
+    }
     ref.current!.style.cursor = nodeAt(p) ? 'move' : '';
     const seg = layout.segs.find((s) => distToSeg(p, s) < 6 / view.current.k + ((s.lanes.length - 1) * LANE_GAP) / 2);
     if (seg) {
@@ -366,6 +377,8 @@ export default function FactoryCanvas({ layout, fitKey, onMoveNode, playing, spe
             return;
           }
           const p = toWorld(e);
+          const jn = junctionAt(p);
+          if (jn) return setTip(recipeTip(jn, p)); // tap on touch screens
           const n = nodeAt(p);
           if (n) grab.current = { id: n.group.id, dx: p.x - n.x, dy: p.y - n.y };
           else drag.current = { x: e.clientX, y: e.clientY };

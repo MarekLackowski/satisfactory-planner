@@ -186,3 +186,10 @@ aside footer .row { margin-bottom: 4px; }
   .legend { display: none; }
   main { height: 85vh; }
 }
+.tip { max-width: 440px; }
+.guide { display: grid; grid-template-columns: repeat(auto-fill, minmax(340px, 1fr)); gap: 10px; }
+.recipe { border: 1px solid var(--line); border-radius: 8px; padding: 8px 10px; background: var(--node); }
+.recipe-head { display: flex; align-items: center; gap: 6px; margin-bottom: 4px; }
+.recipe-head .unit { margin-left: auto; }
+.recipe ul { margin: 0; padding-left: 18px; font-size: 12px; }
+.recipe li { margin: 2px 0; }

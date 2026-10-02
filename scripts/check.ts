@@ -86,6 +86,30 @@ const near = (a: number, b: number, msg: string) => assert.ok(Math.abs(a - b) < 
   assert.ok(!buildSim(l).junctions.some((j) => Math.hypot(j.x - port.x, j.y - port.y) < 1), 'no splitter where 2 belts feed 2 lines');
 }
 
+// 2e) build recipe at a port: the user's RIP factory splits only line 2 of the smelters, 30/30;
+// the simulation sends items onto exactly those belts
+{
+  const s: Settings = {
+    ...base, unlimitedRaw: false, beltMk: [1], cheapBelts: true, alts: ['Recipe_Alternate_Screw_C'],
+    outputs: [{ item: 'Desc_IronPlateReinforced_C', rate: 10, maximize: true }],
+    inputs: [{ kind: 'miner', extractor: 'Build_MinerMk1_C', item: 'Desc_OreIron_C', purity: 'impure', count: 4, clock: 1 }],
+  };
+  const p = buildPlan(await solve(s), s);
+  const w = p.wirings.find((x) => x.key === 'out:Recipe_IngotIron_C:Desc_IronIngot_C')!;
+  assert.equal(w.splitters, 1);
+  assert.equal(w.mergers, 0);
+  assert.ok(w.steps.some((t) => t.includes('even split')), w.steps.join(' | '));
+  assert.ok(!p.wirings.find((x) => x.key === 'in:Recipe_IngotIron_C:Desc_OreIron_C')!.splitters, 'ore goes straight in');
+  const l = layout(p, s);
+  const sim = buildSim(l);
+  const plate = sim.belts.find((b) => b.seg.edge?.startsWith('Recipe_IngotIron_C>Recipe_IronPlate_C'))!;
+  const f0 = [...plate.fed];
+  for (let t = 0; t < 600; t += 0.05) step(sim, 0.05);
+  const per = plate.fed.map((n, i) => ((n - f0[i]) / 600) * 60);
+  const want = p.edges.find((e) => e.id === plate.seg.edge)!.laneRates;
+  per.forEach((r, i) => assert.ok(Math.abs(r - want[i]) < 1, `lane ${i}: ${r.toFixed(1)}/min, recipe ${want[i]}`));
+}
+
 // 3) infeasible: no buildings
 await assert.rejects(solve({ ...base, buildings: [], outputs: [{ item: 'Desc_IronPlate_C', rate: 10, maximize: false }] }));
 

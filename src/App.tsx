@@ -448,6 +448,7 @@ function Summary({ plan }: { plan: Plan }) {
   const machines = plan.groups.filter((g) => g.kind === 'recipe');
   const sources = plan.groups.filter((g) => g.kind === 'extract' || g.kind === 'input');
   const outs = plan.groups.filter((g) => g.kind === 'output' || g.kind === 'sink');
+  const guide = plan.wirings.filter((w) => w.splitters || w.mergers);
   return (
     <div className="summary">
       {plan.warnings.map((w) => <div key={w} className="warn">{w}</div>)}
@@ -474,6 +475,24 @@ function Summary({ plan }: { plan: Plan }) {
           <List rows={[...plan.cost].sort((a, b) => b[1] - a[1]).map(([id, n]) => [itemIcon(id), nameOf(id), `${n}`] as [string, string, string])} />
         </div>
       </div>
+      {guide.length > 0 && (
+        <>
+          <h3>Build guide: belt splits &amp; merges</h3>
+          <p className="hint">Where belts leave or enter a group. Hover or tap a splitter/merger block on the graph to see the same recipe there.</p>
+          <div className="guide">
+            {guide.map((w) => (
+              <div key={w.key} className="recipe">
+                <div className="recipe-head">
+                  <Icon src={itemIcon(w.key.slice(w.key.lastIndexOf(':') + 1))} size={20} />
+                  <b>{w.title}</b>
+                  <span className="unit">{w.splitters ? `${w.splitters} splitter${w.splitters > 1 ? 's' : ''}` : ''}{w.splitters && w.mergers ? ' · ' : ''}{w.mergers ? `${w.mergers} merger${w.mergers > 1 ? 's' : ''}` : ''}</span>
+                </div>
+                <ul>{w.steps.map((s) => <li key={s}>{s}</li>)}</ul>
+              </div>
+            ))}
+          </div>
+        </>
+      )}
     </div>
   );
 }

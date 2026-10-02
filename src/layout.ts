@@ -2,6 +2,7 @@ import dagre from '@dagrejs/dagre';
 import { items, type Conveyor } from './game';
 import { buildings, extractors } from './game';
 import { conveyorsFor, type Group, type Plan } from './plan';
+import type { Wiring } from './wiring';
 import type { Settings } from './solver';
 
 export type Dir = 'TB' | 'LR';
@@ -18,7 +19,7 @@ export type Segment = {
   cum: number[]; // cumulative length at each point
   edge?: string; // inter-group edge id
   // ends attached to a group port: belts meet there even though parallel lanes start/end side by side
-  join?: { start?: string; end?: string };
+  join?: { start?: string; end?: string; line?: number };
 };
 export type MachineBox = { x: number; y: number; w: number; h: number; clock: number; shards: number };
 export type NodeBox = {
@@ -26,7 +27,7 @@ export type NodeBox = {
   inPort: Record<string, Pt>; outPort: Record<string, Pt>;
   titleX: number; // header text starts here (TB: right of the input buses that pass through the header)
 };
-export type Layout = { x: number; y: number; w: number; h: number; nodes: NodeBox[]; segs: Segment[] };
+export type Layout = { x: number; y: number; w: number; h: number; nodes: NodeBox[]; segs: Segment[]; wirings: Wiring[] };
 /** result of the (expensive) auto-arrangement: node top-left corners + edge routes */
 export type Arranged = { dir: Dir; pos: Record<string, Pt>; routes: Record<string, Pt[]> };
 
@@ -154,7 +155,7 @@ function inner(n: NodeBox, dir: Dir, s: Settings, segs: Segment[], rin: number[]
       const x = PAD + rin[i] * L + L / 2 + off(l);
       // feed from the port straight into this line's manifold
       let prev: [number, number][] = [[x, bIn], [x, b]];
-      let join: Segment['join'] = { start: `in:${g.id}:${f.item}` };
+      let join: Segment['join'] = { start: `in:${g.id}:${f.item}`, line: l };
       boxes.forEach((a, k) => {
         const da = a + port(rin[i], ni);
         seg([...prev, [da, b]], f.item, f.segs[k], join);
@@ -174,7 +175,7 @@ function inner(n: NodeBox, dir: Dir, s: Settings, segs: Segment[], rin: number[]
         prev = [ua, b];
       });
       // collector straight out to the port
-      seg([prev!, [x, b], [x, bOut]], f.item, f.segs[f.segs.length - 1], { end: `out:${g.id}:${f.item}` });
+      seg([prev!, [x, b], [x, bOut]], f.item, f.segs[f.segs.length - 1], { end: `out:${g.id}:${f.item}`, line: l });
     });
   });
 }
@@ -358,7 +359,7 @@ export function geometry(plan: Plan, s: Settings, arr: Arranged, moved: Record<s
     x, y,
     w: Math.max(...nodes.map((n) => n.x + n.w)) + 40 - x,
     h: Math.max(...nodes.map((n) => n.y + n.h)) + 40 - y,
-    nodes, segs,
+    nodes, segs, wirings: plan.wirings,
   };
 }
 
