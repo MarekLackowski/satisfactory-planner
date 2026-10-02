@@ -25,6 +25,9 @@ export type Junction = Pt & { kind: 'splitter' | 'merger' | 'junction' }; // jun
 export type Sim = { belts: Belt[]; junctions: Junction[] };
 
 const key = (p: Pt, item: string) => `${Math.round(p.x * 10)},${Math.round(p.y * 10)},${item}`;
+// where a segment begins / ends in the network: its group port if attached to one, else its end point
+const startKey = (s: Segment) => s.join?.start ?? key(s.pts[0], s.item);
+const endKey = (s: Segment) => s.join?.end ?? key(s.pts[s.pts.length - 1], s.item);
 
 export function buildSim(layout: Layout, old?: Sim): Sim {
   const belts: Belt[] = layout.segs
@@ -32,36 +35,39 @@ export function buildSim(layout: Layout, old?: Sim): Sim {
     .map((seg) => ({ seg, v: (seg.conv[0].rate / 60) * ITEM_GAP, next: [], prev: [], lanes: seg.lanes.map(() => []), sent: [], total: 0, acc: 0, rr: 0, sunk: 0 }));
   const starts = new Map<string, number[]>();
   belts.forEach((b, i) => {
-    const k = key(b.seg.pts[0], b.seg.item);
+    const k = startKey(b.seg);
     starts.set(k, [...(starts.get(k) ?? []), i]);
   });
   belts.forEach((b, i) => {
-    b.next = starts.get(key(b.seg.pts[b.seg.pts.length - 1], b.seg.item)) ?? [];
+    b.next = starts.get(endKey(b.seg)) ?? [];
     b.sent = b.next.map(() => 0);
     for (const j of b.next) belts[j].prev.push(i);
   });
-  // splitters / mergers (and pipe junctions): points where several segments start or end, fluids included
-  const split = new Map<string, Pt>();
-  const merge = new Map<string, Pt>();
-  const fluid = new Set<string>();
-  const count = (m: Map<string, number>, k: string) => m.set(k, (m.get(k) ?? 0) + 1);
-  const nStart = new Map<string, number>();
-  const nEnd = new Map<string, number>();
+  // splitters / mergers (and pipe junctions) where belts branch or join. A port where n parallel belts simply
+  // continue as n line belts (or the other way round) needs none.
+  type Node = { at: Pt; ins: number; outs: number; lanesIn: number; lanesOut: number; fluid: boolean };
+  const nodes = new Map<string, Node>();
+  const node = (k: string, at: Pt, fluid: boolean) => {
+    if (!nodes.has(k)) nodes.set(k, { at, ins: 0, outs: 0, lanesIn: 0, lanesOut: 0, fluid });
+    return nodes.get(k)!;
+  };
   for (const s of layout.segs) {
     if (s.len <= 0.5) continue;
-    const a = s.pts[0];
-    const e = s.pts[s.pts.length - 1];
-    const ka = key(a, s.item);
-    const ke = key(e, s.item);
-    count(nStart, ka);
-    count(nEnd, ke);
-    split.set(ka, a);
-    merge.set(ke, e);
-    if (s.fluid) fluid.add(ka).add(ke);
+    const a = node(startKey(s), s.pts[0], s.fluid);
+    a.outs++;
+    a.lanesOut += s.lanes.length;
+    if (s.edge) a.at = s.pts[0]; // port junctions sit on the port, where links leave
+    const e = node(endKey(s), s.pts[s.pts.length - 1], s.fluid);
+    e.ins++;
+    e.lanesIn += s.lanes.length;
+    if (s.edge) e.at = s.pts[s.pts.length - 1]; // ... and where links arrive
   }
   const junctions: Junction[] = [];
-  for (const [k, p] of split) if (nStart.get(k)! > 1) junctions.push({ ...p, kind: fluid.has(k) ? 'junction' : 'splitter' });
-  for (const [k, p] of merge) if (nEnd.get(k)! > 1) junctions.push({ ...p, kind: fluid.has(k) ? 'junction' : 'merger' });
+  for (const nd of nodes.values()) {
+    if (!nd.ins || !nd.outs) continue; // pure source or sink
+    if ((nd.ins === 1 || nd.outs === 1) && nd.lanesIn === nd.lanesOut) continue; // belts just continue
+    junctions.push({ ...nd.at, kind: nd.fluid ? 'junction' : nd.lanesOut > nd.lanesIn || nd.outs > nd.ins ? 'splitter' : 'merger' });
+  }
   const sim = { belts, junctions };
   if (old && old.belts.length === belts.length && old.belts.every((o, i) => o.seg.item === belts[i].seg.item && o.lanes.length === belts[i].lanes.length)) {
     // same plan, groups only moved: keep every item at the same relative spot
@@ -80,27 +86,31 @@ export function buildSim(layout: Layout, old?: Sim): Sim {
 }
 
 /** put an item at the entry of belt b if one of its lanes has room; d = how far in it already got */
-function enter(b: Belt, d: number) {
+function enter(b: Belt, d: number, prefer = -1) {
+  const first = prefer >= 0 ? prefer : b.rr;
   for (let k = 0; k < b.lanes.length; k++) {
-    const lane = b.lanes[(b.rr + k) % b.lanes.length];
+    const lane = b.lanes[(first + k) % b.lanes.length];
     const tail = lane.length ? lane[lane.length - 1].d : Infinity;
     if (tail < ITEM_GAP) continue;
     lane.push({ d: Math.min(d, tail - ITEM_GAP, b.seg.len) });
-    b.rr = (b.rr + k + 1) % b.lanes.length;
+    b.rr = (first + k + 1) % b.lanes.length;
     return true;
   }
   return false;
 }
 
-/** splitter: the next belt furthest behind its planned share that has room */
-function handOff(sim: Sim, b: Belt, over: number) {
+/** splitter: the next belt furthest behind its planned share that has room; lane k of n belts → n line belts goes straight to belt k */
+function handOff(sim: Sim, b: Belt, over: number, lane: number, self: number) {
   const rates = b.next.map((j) => sim.belts[j].seg.rate);
   const sum = rates.reduce((a, r) => a + r, 0) || 1;
   const order = b.next
     .map((j, k) => ({ j, k, deficit: (rates[k] / sum) * (b.total + 1) - b.sent[k] }))
     .sort((p, q) => q.deficit - p.deficit);
+  if (b.next.length === b.lanes.length && b.lanes.length > 1) order.unshift(...order.splice(order.findIndex((o) => o.k === lane), 1));
   for (const { j, k } of order) {
-    if (enter(sim.belts[j], over)) {
+    const t = sim.belts[j];
+    const pos = t.prev.indexOf(self);
+    if (enter(t, over, t.prev.length === t.lanes.length && t.lanes.length > 1 ? pos : -1)) {
       b.sent[k]++;
       b.total++;
       return true;
@@ -110,9 +120,9 @@ function handOff(sim: Sim, b: Belt, over: number) {
 }
 
 export function step(sim: Sim, dt: number) {
-  for (const b of sim.belts) {
+  sim.belts.forEach((b, self) => {
     const len = b.seg.len;
-    for (const lane of b.lanes) {
+    b.lanes.forEach((lane, li) => {
       for (let i = 0; i < lane.length; i++) {
         const it = lane[i];
         let d = it.d + b.v * dt;
@@ -120,7 +130,7 @@ export function step(sim: Sim, dt: number) {
         if (i === 0 && d >= len) {
           // reached the end: into a machine/output (sink) or onto the next belt
           if (!b.next.length) b.sunk++;
-          if (!b.next.length || handOff(sim, b, d - len)) {
+          if (!b.next.length || handOff(sim, b, d - len, li, self)) {
             lane.shift();
             i--;
             continue;
@@ -129,11 +139,11 @@ export function step(sim: Sim, dt: number) {
         }
         it.d = Math.max(it.d, d);
       }
-    }
+    });
     if (!b.prev.length) {
       // source: machine output or factory input, spawning at the planned rate
       b.acc = Math.min(b.acc + (b.seg.rate / 60) * dt, 3 + (b.seg.rate / 60) * dt);
       while (b.acc >= 1 && enter(b, 0)) b.acc--;
     }
-  }
+  });
 }

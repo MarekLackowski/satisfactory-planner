@@ -72,6 +72,20 @@ const near = (a: number, b: number, msg: string) => assert.ok(Math.abs(a - b) < 
   assert.ok(sim.junctions.filter((j) => j.kind === 'merger').length >= merges, 'mergers shown');
 }
 
+// 2d) n parallel belts feeding n lines go straight in: no splitter at that port
+{
+  const s: Settings = {
+    ...base, unlimitedRaw: false, beltMk: [1],
+    outputs: [{ item: 'Desc_IronIngot_C', rate: 1, maximize: true }],
+    inputs: [{ kind: 'miner', extractor: 'Build_MinerMk1_C', item: 'Desc_OreIron_C', purity: 'impure', count: 4, clock: 1 }],
+  };
+  const l = layout(buildPlan(await solve(s), s), s);
+  const smelt = l.nodes.find((n) => n.group.id === 'Recipe_IngotIron_C')!;
+  assert.equal(smelt.group.lines.length, 2);
+  const port = smelt.inPort.Desc_OreIron_C;
+  assert.ok(!buildSim(l).junctions.some((j) => Math.hypot(j.x - port.x, j.y - port.y) < 1), 'no splitter where 2 belts feed 2 lines');
+}
+
 // 3) infeasible: no buildings
 await assert.rejects(solve({ ...base, buildings: [], outputs: [{ item: 'Desc_IronPlate_C', rate: 10, maximize: false }] }));
 

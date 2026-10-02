@@ -17,6 +17,8 @@ export type Segment = {
   len: number;
   cum: number[]; // cumulative length at each point
   edge?: string; // inter-group edge id
+  // ends attached to a group port: belts meet there even though parallel lanes start/end side by side
+  join?: { start?: string; end?: string };
 };
 export type MachineBox = { x: number; y: number; w: number; h: number; clock: number; shards: number };
 export type NodeBox = {
@@ -62,12 +64,12 @@ function offset(pts: Pt[], d: number): Pt[] {
   });
 }
 
-function segment(raw: Pt[], item: string, rate: number, s: Settings, edge?: string): Segment {
+function segment(raw: Pt[], item: string, rate: number, s: Settings, edge?: string, join?: Segment['join']): Segment {
   const pts = raw.filter((p, i) => !i || p.x !== raw[i - 1].x || p.y !== raw[i - 1].y);
   const fluid = items[item].fluid;
   const conv = conveyorsFor(rate, fluid, s);
   const lanes = conv.map((_, k) => path(offset(pts, (k - (conv.length - 1) / 2) * LANE_GAP)));
-  return { ...path(pts), lanes, item, rate, fluid, conv, edge };
+  return { ...path(pts), lanes, item, rate, fluid, conv, edge, join };
 }
 
 export const titleOf = (g: Group) =>
@@ -76,9 +78,9 @@ const TITLE_CHAR = 7; // ≈ px per char of the 12px semibold header font
 const NOTE_CHAR = 6; // 11px info line of simple boxes
 const INFO_LINE = 15; // must match the canvas' simple-box line height
 
-/** spacing between belts of different items: wide enough for the most parallel belts this group carries */
+/** spacing between belts of different items: room for one belt per line and for the widest incoming link */
 function lane(g: Group, s: Settings) {
-  const most = Math.max(1, ...[...g.inputs, ...g.outputs].map((f) => conveyorsFor(f.rate, items[f.item].fluid, s).length));
+  const most = Math.max(1, g.lines.length, ...[...g.inputs, ...g.outputs].map((f) => conveyorsFor(f.rate, items[f.item].fluid, s).length));
   return Math.max(12, most * LANE_GAP + 6);
 }
 const lineLen = (g: Group, L: number) => g.inputs.length * L + MW + g.outputs.length * L + 26;
@@ -103,7 +105,7 @@ function size(g: Group, dir: Dir, s: Settings) {
   return dir === 'TB' ? { width: Math.max(170, A, tw), height: HEAD + B + 6 } : { width: Math.max(170, B + 2 * EDGE, tw), height: HEAD + Math.max(170, A) };
 }
 
-/** internal geometry of a group: machines, input bus → manifold → machines → collector → output bus */
+/** internal geometry of a group: each line has its own feed belt from the input port and its own belt to the output port */
 function inner(n: NodeBox, dir: Dir, s: Settings, segs: Segment[], rin: number[], rout: number[]) {
   const g = n.group;
   const ni = g.inputs.length;
@@ -132,9 +134,11 @@ function inner(n: NodeBox, dir: Dir, s: Settings, segs: Segment[], rin: number[]
   const lineH = lineLen(g, L);
   const m0 = PAD + ni * L + 12;
   const port = (k: number, count: number) => (MW * (k + 1)) / (count + 1);
-  const seg = (pts: [number, number][], item: string, rate: number) => segs.push(segment(pts.map(([a, b]) => at(a, b)), item, rate, s));
-  const busIn = g.inputs.map((_, i) => [PAD + rin[i] * L + L / 2, bIn] as [number, number]);
-  const busOut: ([number, number] | undefined)[] = [];
+  const seg = (pts: [number, number][], item: string, rate: number, join?: Segment['join']) =>
+    segs.push(segment(pts.map(([a, b]) => at(a, b)), item, rate, s, undefined, join));
+  // line l's belt runs beside the port, line 0 outermost so feeds/collectors of other lines are never crossed
+  const nl = g.lines.length;
+  const off = (l: number) => ((nl - 1) / 2 - l) * LANE_GAP;
   g.lines.forEach((line, l) => {
     const top = l * lineH;
     const mb = top + ni * L + 10;
@@ -147,21 +151,21 @@ function inner(n: NodeBox, dir: Dir, s: Settings, segs: Segment[], rin: number[]
     });
     line.inputs.forEach((f, i) => {
       const b = top + 6 + rin[i] * L;
-      const busA = busIn[i][0];
-      const busRate = g.lines.slice(l).reduce((acc, ln) => acc + ln.inputs[i].segs[0], 0);
-      seg([busIn[i], [busA, b]], f.item, busRate);
-      busIn[i] = [busA, b];
-      let prev: [number, number] = [busA, b];
+      const x = PAD + rin[i] * L + L / 2 + off(l);
+      // feed from the port straight into this line's manifold
+      let prev: [number, number][] = [[x, bIn], [x, b]];
+      let join: Segment['join'] = { start: `in:${g.id}:${f.item}` };
       boxes.forEach((a, k) => {
         const da = a + port(rin[i], ni);
-        seg([prev, [da, b]], f.item, f.segs[k]);
+        seg([...prev, [da, b]], f.item, f.segs[k], join);
         seg([[da, b], [da, mb]], f.item, f.segs[k] - (f.segs[k + 1] ?? 0));
-        prev = [da, b];
+        prev = [[da, b]];
+        join = undefined;
       });
     });
     line.outputs.forEach((f, j) => {
       const b = mb + MW + 10 + rout[j] * L;
-      const busA = A - PAD - rout[j] * L - L / 2;
+      const x = A - PAD - rout[j] * L - L / 2 + off(l);
       let prev: [number, number] | null = null;
       boxes.forEach((a, k) => {
         const ua = a + port(rout[j], no);
@@ -169,14 +173,10 @@ function inner(n: NodeBox, dir: Dir, s: Settings, segs: Segment[], rin: number[]
         if (prev) seg([prev, [ua, b]], f.item, f.segs[k - 1]);
         prev = [ua, b];
       });
-      const last = f.segs[f.segs.length - 1];
-      seg([prev!, [busA, b]], f.item, last);
-      const acc = g.lines.slice(0, l + 1).reduce((t, ln) => t + ln.outputs[j].segs[ln.outputs[j].segs.length - 1], 0);
-      if (busOut[j]) seg([busOut[j]!, [busA, b]], f.item, acc - last);
-      busOut[j] = [busA, b];
+      // collector straight out to the port
+      seg([prev!, [x, b], [x, bOut]], f.item, f.segs[f.segs.length - 1], { end: `out:${g.id}:${f.item}` });
     });
   });
-  g.outputs.forEach((f, j) => seg([busOut[j]!, [A - PAD - rout[j] * L - L / 2, bOut]], f.item, f.rate));
 }
 
 type Rect = { x: number; y: number; w: number; h: number };
@@ -350,7 +350,7 @@ export function geometry(plan: Plan, s: Settings, arr: Arranged, moved: Record<s
       if (p.x === q.x) vRuns.push({ at: p.x, from: p.y, to: q.y, item: e.item, half });
       else hRuns.push({ at: p.y, from: p.x, to: q.x, item: e.item, half });
     }
-    segs.push(segment(pts, e.item, e.rate, s, e.id));
+    segs.push(segment(pts, e.item, e.rate, s, e.id, { start: `out:${e.from}:${e.item}`, end: `in:${e.to}:${e.item}` }));
   }
   const x = Math.min(...nodes.map((n) => n.x)) - 40;
   const y = Math.min(...nodes.map((n) => n.y)) - 40;

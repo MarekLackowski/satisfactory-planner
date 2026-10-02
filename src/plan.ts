@@ -130,7 +130,7 @@ export function buildPlan(sol: Solution, s: Settings): Plan {
         machines: Array.from({ length: inp.count }, () => ({ clock: inp.clock, shards: Math.max(0, Math.ceil((inp.clock - 1) / 0.5 - EPS)) })),
         lines: [], inputs: [], outputs: [{ item: inp.item, rate: used }],
         power: inp.count * e.power * inp.clock ** e.exp,
-        note: used < total - EPS ? `${(total - used).toFixed(1)}/min unused` : undefined,
+        note: total - used > 0.05 ? `${(total - used).toFixed(1)}/min unused` : undefined,
       };
       buildLines(g, () => ({ inputs: [], outputs: [{ item: inp.item, rate: used / inp.count }] }), s);
       groups.push(g);
@@ -219,16 +219,19 @@ export function buildPlan(sol: Solution, s: Settings): Plan {
       for (const f of line.inputs) add(items[f.item].fluid ? JUNCTION : SPLITTER, line.machines.length - 1);
       for (const f of line.outputs) add(items[f.item].fluid ? JUNCTION : MERGER, line.machines.length - 1);
     }
-    for (const f of g.inputs) add(items[f.item].fluid ? JUNCTION : SPLITTER, g.lines.length - 1);
-    for (const f of g.outputs) add(items[f.item].fluid ? JUNCTION : MERGER, g.lines.length - 1);
   }
-  const byPair = (key: (e: Edge) => string) => {
-    const m = new Map<string, Edge[]>();
-    for (const e of edges) m.set(key(e), [...(m.get(key(e)) ?? []), e]);
-    return m;
+  // at each port the links (with their parallel belts) meet one belt per line: nothing is needed when n belts
+  // just continue as n belts, otherwise splitters/mergers to go from one count to the other
+  const portJoins = (links: Edge[], lines: number, kind: string, item: string) => {
+    const belts = links.reduce((a, e) => a + e.belts.length, 0);
+    const sides = Math.max(lines, 1);
+    if (links.length <= 1 && belts === sides) return;
+    add(items[item].fluid ? JUNCTION : kind, Math.max(belts, sides) - 1);
   };
-  for (const list of byPair((e) => `${e.to}|${e.item}`).values()) add(items[list[0].item].fluid ? JUNCTION : MERGER, list.length - 1);
-  for (const list of byPair((e) => `${e.from}|${e.item}`).values()) add(items[list[0].item].fluid ? JUNCTION : SPLITTER, list.length - 1);
+  for (const g of groups) {
+    for (const f of g.inputs) portJoins(edges.filter((e) => e.to === g.id && e.item === f.item), g.lines.length, g.lines.length > 1 ? SPLITTER : MERGER, f.item);
+    for (const f of g.outputs) portJoins(edges.filter((e) => e.from === g.id && e.item === f.item), g.lines.length, edges.filter((e) => e.from === g.id && e.item === f.item).length > 1 ? SPLITTER : MERGER, f.item);
+  }
 
   const cost = new Map<string, number>();
   for (const [id, n] of count) for (const c of costs[id] ?? []) cost.set(c.item, (cost.get(c.item) ?? 0) + c.amount * n);
