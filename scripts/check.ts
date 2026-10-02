@@ -64,6 +64,12 @@ const near = (a: number, b: number, msg: string) => assert.ok(Math.abs(a - b) < 
   const per = ((out.reduce((a, b) => a + b.sunk, 0) - before) / 600) * 60;
   assert.ok(Math.abs(per - 10) < 0.5, `simulated output ${per.toFixed(2)}/min, planned 10`);
   for (const b of sim.belts) for (const lane of b.lanes) for (let i = 1; i < lane.length; i++) assert.ok(lane[i - 1].d - lane[i].d >= 14 - 1e-6, 'items overlap');
+  // every manifold machine except the last sits behind a splitter, every collector join is a merger
+  const plan = buildPlan(await solve(s), s);
+  const splits = plan.groups.reduce((a, g) => a + g.lines.reduce((x, ln) => x + ln.inputs.length * (ln.machines.length - 1), 0), 0);
+  const merges = plan.groups.reduce((a, g) => a + g.lines.reduce((x, ln) => x + ln.outputs.length * (ln.machines.length - 1), 0), 0);
+  assert.ok(sim.junctions.filter((j) => j.kind === 'splitter').length >= splits, 'splitters shown');
+  assert.ok(sim.junctions.filter((j) => j.kind === 'merger').length >= merges, 'mergers shown');
 }
 
 // 3) infeasible: no buildings

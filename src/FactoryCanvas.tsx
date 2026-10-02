@@ -198,16 +198,8 @@ export default function FactoryCanvas({ layout, fitKey, onMoveNode, playing, spe
         }
       }
     };
+    const JUNCTION_ICON = { splitter: 'Conveyor Splitter', merger: 'Conveyor Merger', junction: 'Pipeline Junction' } as const;
     const drawSim = (sim: Sim) => {
-      for (const j of sim.junctions) {
-        ctx.fillStyle = col('--machine');
-        ctx.strokeStyle = j.kind === 'splitter' ? col('--accent') : col('--muted');
-        ctx.lineWidth = 1.5;
-        ctx.beginPath();
-        ctx.roundRect(j.x - 5, j.y - 5, 10, 10, 2);
-        ctx.fill();
-        ctx.stroke();
-      }
       for (const b of sim.belts) {
         const ic = img(itemIcon(b.seg.item));
         b.lanes.forEach((lane, k) => {
@@ -222,6 +214,18 @@ export default function FactoryCanvas({ layout, fitKey, onMoveNode, playing, spe
             }
           }
         });
+      }
+      // splitters / mergers on top of the items passing through them
+      for (const j of sim.junctions) {
+        ctx.fillStyle = col('--machine');
+        ctx.strokeStyle = j.kind === 'splitter' ? col('--accent') : j.kind === 'merger' ? col('--under') : col('--pipe');
+        ctx.lineWidth = 1.5;
+        ctx.beginPath();
+        ctx.roundRect(j.x - 9, j.y - 9, 18, 18, 4);
+        ctx.fill();
+        ctx.stroke();
+        const ji = img(icon(JUNCTION_ICON[j.kind]));
+        if (ji) ctx.drawImage(ji, j.x - 8, j.y - 8, 16, 16);
       }
     };
 

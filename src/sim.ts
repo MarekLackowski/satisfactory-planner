@@ -21,7 +21,7 @@ export type Belt = {
   rr: number; // round robin over lanes
   sunk: number; // items delivered into a machine / output (sinks only)
 };
-export type Junction = Pt & { kind: 'splitter' | 'merger' };
+export type Junction = Pt & { kind: 'splitter' | 'merger' | 'junction' }; // junction = pipeline junction (fluids)
 export type Sim = { belts: Belt[]; junctions: Junction[] };
 
 const key = (p: Pt, item: string) => `${Math.round(p.x * 10)},${Math.round(p.y * 10)},${item}`;
@@ -31,30 +31,37 @@ export function buildSim(layout: Layout, old?: Sim): Sim {
     .filter((s) => !s.fluid && s.len > 0.5)
     .map((seg) => ({ seg, v: (seg.conv[0].rate / 60) * ITEM_GAP, next: [], prev: [], lanes: seg.lanes.map(() => []), sent: [], total: 0, acc: 0, rr: 0, sunk: 0 }));
   const starts = new Map<string, number[]>();
-  const ends = new Map<string, number>();
   belts.forEach((b, i) => {
     const k = key(b.seg.pts[0], b.seg.item);
     starts.set(k, [...(starts.get(k) ?? []), i]);
-    const e = key(b.seg.pts[b.seg.pts.length - 1], b.seg.item);
-    ends.set(e, (ends.get(e) ?? 0) + 1);
   });
   belts.forEach((b, i) => {
     b.next = starts.get(key(b.seg.pts[b.seg.pts.length - 1], b.seg.item)) ?? [];
     b.sent = b.next.map(() => 0);
     for (const j of b.next) belts[j].prev.push(i);
   });
-  const junctions: Junction[] = [];
-  const seen = new Set<string>();
-  for (const b of belts) {
-    const s = b.seg.pts[0];
-    const k = key(s, b.seg.item);
-    if (!seen.has(k) && (starts.get(k)?.length ?? 0) > 1) junctions.push({ ...s, kind: 'splitter' });
-    seen.add(k);
-    const e = b.seg.pts[b.seg.pts.length - 1];
-    const ke = key(e, b.seg.item);
-    if (!seen.has(ke) && (ends.get(ke) ?? 0) > 1) junctions.push({ ...e, kind: 'merger' });
-    seen.add(ke);
+  // splitters / mergers (and pipe junctions): points where several segments start or end, fluids included
+  const split = new Map<string, Pt>();
+  const merge = new Map<string, Pt>();
+  const fluid = new Set<string>();
+  const count = (m: Map<string, number>, k: string) => m.set(k, (m.get(k) ?? 0) + 1);
+  const nStart = new Map<string, number>();
+  const nEnd = new Map<string, number>();
+  for (const s of layout.segs) {
+    if (s.len <= 0.5) continue;
+    const a = s.pts[0];
+    const e = s.pts[s.pts.length - 1];
+    const ka = key(a, s.item);
+    const ke = key(e, s.item);
+    count(nStart, ka);
+    count(nEnd, ke);
+    split.set(ka, a);
+    merge.set(ke, e);
+    if (s.fluid) fluid.add(ka).add(ke);
   }
+  const junctions: Junction[] = [];
+  for (const [k, p] of split) if (nStart.get(k)! > 1) junctions.push({ ...p, kind: fluid.has(k) ? 'junction' : 'splitter' });
+  for (const [k, p] of merge) if (nEnd.get(k)! > 1) junctions.push({ ...p, kind: fluid.has(k) ? 'junction' : 'merger' });
   const sim = { belts, junctions };
   if (old && old.belts.length === belts.length && old.belts.every((o, i) => o.seg.item === belts[i].seg.item && o.lanes.length === belts[i].lanes.length)) {
     // same plan, groups only moved: keep every item at the same relative spot
