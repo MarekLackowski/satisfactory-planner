@@ -1,6 +1,8 @@
 import { useEffect, useRef, useState } from 'react';
 import { buildings, extractors, fmt, icon, itemIcon, items, nameOf } from './game';
 import { buildSim, step, type Sim } from './sim';
+import WiringDiagram from './WiringDiagram';
+import type { Wiring } from './wiring';
 import { LANE_GAP, titleOf, type Layout, type NodeBox, type Path, type Pt, type Segment } from './layout';
 
 const imgCache = new Map<string, HTMLImageElement>();
@@ -95,7 +97,8 @@ export default function FactoryCanvas({ layout, fitKey, onMoveNode, playing, spe
   useEffect(() => {
     opts.current = { playing, speed, bottlenecks };
   }, [playing, speed, bottlenecks]);
-  const [tip, setTip] = useState<{ x: number; y: number; lines: string[] } | null>(null);
+  type Tip = { x: number; y: number; lines: string[]; wiring?: Wiring };
+  const [tip, setTipState] = useState<(Tip & { style: React.CSSProperties }) | null>(null);
 
   const layoutRef = useRef(layout);
   // read by the animation loop, so dragging doesn't restart it
@@ -297,11 +300,21 @@ export default function FactoryCanvas({ layout, fitKey, onMoveNode, playing, spe
     drag.current = null;
     grab.current = null;
   };
+  // keep the tooltip on screen: open towards the side with more room
+  const setTip = (t: Tip | null) => setTipState(t && { ...t, style: tipPos(t) });
+  const tipPos = (t: { x: number; y: number }): React.CSSProperties => {
+    const W = ref.current?.clientWidth ?? 0;
+    const H = ref.current?.clientHeight ?? 0;
+    return {
+      ...(t.x > W / 2 ? { right: W - t.x + 14 } : { left: t.x + 14 }),
+      ...(t.y > H / 2 ? { bottom: H - t.y + 14 } : { top: t.y + 14 }),
+    };
+  };
   // splitter/merger blocks at ports carry their build recipe
   const junctionAt = (p: Pt) =>
     simRef.current?.sim.junctions.find((j) => j.wiring && Math.abs(j.x - p.x) < 11 && Math.abs(j.y - p.y) < 11);
   const recipeTip = (j: NonNullable<ReturnType<typeof junctionAt>>, p: { sx: number; sy: number }) => ({
-    x: p.sx, y: p.sy, lines: [`How to build: ${j.wiring!.title}`, ...j.wiring!.steps.map((s) => `• ${s}`)],
+    x: p.sx, y: p.sy, lines: [`How to build: ${j.wiring!.title}`], wiring: j.wiring,
   });
   const nodeAt = (p: Pt) => layout.nodes.find((n) => p.x >= n.x && p.x <= n.x + n.w && p.y >= n.y && p.y <= n.y + n.h);
   const onMove = (e: React.PointerEvent) => {
@@ -395,10 +408,11 @@ export default function FactoryCanvas({ layout, fitKey, onMoveNode, playing, spe
       />
       <button className="fit" onClick={fit} title="Fit to screen">⤢ Fit</button>
       {tip && (
-        <div className="tip" style={{ left: tip.x + 14, top: tip.y + 14 }}>
+        <div className={`tip${tip.wiring ? ' tip-wide' : ''}`} style={tip.style}>
           {tip.lines.map((l, i) => (
             <div key={i} className={i ? '' : 'tip-title'}>{l}</div>
           ))}
+          {tip.wiring && <WiringDiagram w={tip.wiring} />}
         </div>
       )}
     </div>

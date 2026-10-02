@@ -2,6 +2,7 @@ import { useEffect, useMemo, useState } from 'react';
 import FactoriesPanel from './Factories';
 import { loadFactories, newFactory, saveFactories, type Factories, type Factory } from './storage';
 import FactoryCanvas from './FactoryCanvas';
+import WiringDiagram from './WiringDiagram';
 import {
   belts, buildings, extractors, fmt, icon, itemIcon, items, nameOf, pipes, producible, rawItems, recipes, WATER_PUMP, type Purity,
 } from './game';
@@ -487,7 +488,11 @@ function Summary({ plan }: { plan: Plan }) {
                   <b>{w.title}</b>
                   <span className="unit">{w.splitters ? `${w.splitters} splitter${w.splitters > 1 ? 's' : ''}` : ''}{w.splitters && w.mergers ? ' · ' : ''}{w.mergers ? `${w.mergers} merger${w.mergers > 1 ? 's' : ''}` : ''}</span>
                 </div>
-                <ul>{w.steps.map((s) => <li key={s}>{s}</li>)}</ul>
+                <WiringDiagram w={w} />
+                <details>
+                  <summary>Text version</summary>
+                  <ul>{w.steps.map((s) => <li key={s}>{s}</li>)}</ul>
+                </details>
               </div>
             ))}
           </div>

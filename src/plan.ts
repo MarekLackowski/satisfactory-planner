@@ -229,6 +229,7 @@ export function buildPlan(sol: Solution, s: Settings): Plan {
   // ---- port wiring: exactly which belt goes where at every group port with production lines
   const byId = Object.fromEntries(groups.map((g) => [g.id, g]));
   const lineName = (g: Group, l: number) => `${g.lines.length > 1 ? `Line ${l + 1}` : 'Line'} (${g.lines[l].machines.length}× ${nameOf(g.building!)})`;
+  const groupIcon = (g: Group, item: string) => (g.building ? nameOf(g.building) : g.kind === 'sink' ? 'AWESOME Sink' : nameOf(item));
   const wirings: Wiring[] = [];
   // outputs first: they fix how much each parallel belt of a link carries, which the consumer's input then uses
   for (const g of groups) {
@@ -236,8 +237,8 @@ export function buildPlan(sol: Solution, s: Settings): Plan {
     g.outputs.forEach((f, j) => {
       const links = edges.filter((e) => e.from === g.id && e.item === f.item);
       if (!links.length) return;
-      const src: End[] = g.lines.map((ln, l) => ({ label: lineName(g, l), rate: ln.outputs[j].segs[ln.outputs[j].segs.length - 1], lanes: 1, cap: Infinity, ref: `line:${l}` }));
-      const dst: End[] = links.map((e) => ({ label: byId[e.to].label, rate: e.rate, lanes: e.belts.length, cap: e.belts[0].rate, ref: `edge:${e.id}` }));
+      const src: End[] = g.lines.map((ln, l) => ({ label: lineName(g, l), icon: nameOf(g.building!), rate: ln.outputs[j].segs[ln.outputs[j].segs.length - 1], lanes: 1, cap: Infinity, ref: `line:${l}` }));
+      const dst: End[] = links.map((e) => ({ label: byId[e.to].label, icon: groupIcon(byId[e.to], f.item), rate: e.rate, lanes: e.belts.length, cap: e.belts[0].rate, ref: `edge:${e.id}` }));
       const pieces = wire(src, dst);
       links.forEach((e, k) => (e.laneRates = e.belts.map((_, ln) => pieces.filter((p) => p.to === k && p.lane === ln).reduce((s2, p) => s2 + p.rate, 0))));
       wirings.push(describe(`${g.label}: ${nameOf(f.item)} out`, `out:${g.id}:${f.item}`, src, dst, pieces));
@@ -249,8 +250,8 @@ export function buildPlan(sol: Solution, s: Settings): Plan {
       const links = edges.filter((e) => e.to === g.id && e.item === f.item);
       if (!links.length) return;
       const src: End[] = links.flatMap((e) =>
-        e.belts.map((_, k) => ({ label: `${byId[e.from].label} belt${e.belts.length > 1 ? ` ${k + 1}/${e.belts.length}` : ''}`, rate: e.laneRates[k], lanes: 1, cap: Infinity, ref: `edge:${e.id}#${k}` })));
-      const dst: End[] = g.lines.map((ln, l) => ({ label: lineName(g, l), rate: ln.inputs[i].segs[0], lanes: 1, cap: Infinity, ref: `line:${l}` }));
+        e.belts.map((_, k) => ({ label: `${byId[e.from].label} belt${e.belts.length > 1 ? ` ${k + 1}/${e.belts.length}` : ''}`, icon: groupIcon(byId[e.from], f.item), rate: e.laneRates[k], lanes: 1, cap: Infinity, ref: `edge:${e.id}#${k}` })));
+      const dst: End[] = g.lines.map((ln, l) => ({ label: lineName(g, l), icon: nameOf(g.building!), rate: ln.inputs[i].segs[0], lanes: 1, cap: Infinity, ref: `line:${l}` }));
       wirings.push(describe(`${g.label}: ${nameOf(f.item)} in`, `in:${g.id}:${f.item}`, src.filter((x) => x.rate > 0.01), dst, wire(src.filter((x) => x.rate > 0.01), dst)));
     });
   }

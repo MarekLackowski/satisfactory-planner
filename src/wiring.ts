@@ -5,7 +5,7 @@ import { fmt } from './game';
  * Sources are single belts (a production line, or one belt of an incoming link); sinks are a production line
  * or an outgoing link that may consist of several parallel belts ("lanes").
  */
-export type End = { label: string; rate: number; lanes: number; cap: number; ref: string }; // ref: line:<l> | edge:<id>[#lane]
+export type End = { label: string; icon: string; rate: number; lanes: number; cap: number; ref: string }; // ref: line:<l> | edge:<id>[#lane]; icon: display name
 export type Piece = { from: number; to: number; lane: number; rate: number };
 export type Wiring = {
   key: string; // in:<group>:<item> | out:<group>:<item>, same as the belts' join tags
@@ -67,6 +67,14 @@ export function wire(src: End[], dst: End[]): Piece[] {
     }
   });
   return pieces;
+}
+
+/** kind of split a splitter has to do for these output amounts */
+export function splitKind(amounts: number[]): 'even' | '2:1' | 'uneven' {
+  const [a, b] = [...amounts].sort((x, y) => y - x);
+  if (amounts.length <= 3 && amounts.every((x) => near(x, amounts[0]))) return 'even';
+  if (amounts.length === 2 && near(a, 2 * b)) return '2:1';
+  return 'uneven';
 }
 
 /** how to build a splitter giving these amounts (a splitter shares evenly between its connected outputs) */
