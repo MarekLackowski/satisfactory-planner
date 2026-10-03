@@ -9,6 +9,7 @@ export type Factory = {
   outputs: Settings['outputs'];
   inputs: Settings['inputs'];
   powerBudget?: number; // MW limit for this factory
+  selfPowered?: boolean; // builds its own power plants
   dir: Dir;
   moved: Record<string, Pt>;
   updated: number;

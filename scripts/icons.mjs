@@ -6,7 +6,7 @@ const g = JSON.parse(fs.readFileSync('src/data/game.json', 'utf8'));
 
 const names = [
   ...Object.values(g.items), ...Object.values(g.buildings), ...Object.values(g.extractors), ...g.belts, ...g.pipes,
-].map((x) => x.name).concat(['Conveyor Splitter', 'Conveyor Merger', 'Pipeline Junction', 'AWESOME Sink']);
+].filter((x) => !x.power).map((x) => x.name).concat(['Conveyor Splitter', 'Conveyor Merger', 'Pipeline Junction', 'AWESOME Sink']);
 
 export const slug = (n) => n.replace(/[^\w.-]+/g, '_');
 fs.mkdirSync('public/icons', { recursive: true });

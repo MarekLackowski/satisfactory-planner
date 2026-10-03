@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
-import { buildings, extractors, fmt, icon, itemIcon, items, nameOf, TIER_COLORS, type ColorBy } from './game';
+import { amount, buildings, extractors, fmt, icon, itemIcon, items, nameOf, TIER_COLORS, type ColorBy } from './game';
 import { buildSim, step, type Sim } from './sim';
 import WiringDiagram from './WiringDiagram';
 import type { Wiring } from './wiring';
@@ -168,7 +168,8 @@ export default function FactoryCanvas({ layout, fitKey, onMoveNode, playing, spe
         ctx.font = '11px system-ui, sans-serif';
         ctx.fillStyle = col('--muted');
         [...g.inputs, ...g.outputs].forEach((x, i) =>
-          ctx.fillText(`${fmt(x.rate)}/min ${nameOf(x.item)}`, n.x + 10, n.y + 44 + i * INFO_LINE, n.w - 20));
+          ctx.fillText(amount(x.item, x.rate), n.x + 10, n.y + 44 + i * INFO_LINE, n.w - 20));
+        if (g.generates) ctx.fillText(`⚡ ${fmt(g.generates)} MW`, n.x + 10, n.y + 44 + (g.inputs.length + g.outputs.length) * INFO_LINE, n.w - 20);
       }
       for (const m of n.machines) {
         ctx.fillStyle = col('--machine');
@@ -466,8 +467,9 @@ export default function FactoryCanvas({ layout, fitKey, onMoveNode, playing, spe
       lines: [
         g.label,
         ...(b ? [`${g.machines.length}× ${b.name} in ${g.lines.length} line(s)`] : []),
-        ...g.inputs.map((f) => `in: ${fmt(f.rate)}/min ${nameOf(f.item)}`),
-        ...g.outputs.map((f) => `out: ${fmt(f.rate)}/min ${nameOf(f.item)}`),
+        ...g.inputs.map((f) => `in: ${amount(f.item, f.rate)}`),
+        ...g.outputs.map((f) => `out: ${amount(f.item, f.rate)}`),
+        ...(g.generates ? [`generates: ${fmt(g.generates)} MW`] : []),
         ...(g.power ? [`Power: ${fmt(g.power)} MW`] : []),
         ...(g.note ? [g.note] : []),
       ],

@@ -1,5 +1,5 @@
 import highsLoader from 'highs';
-import { belts, buildings, extractors, importWeight, items, pipes, PURITY, recipes, WATER, WATER_PUMP, type Purity, type Recipe } from './game';
+import { belts, buildings, extractors, importWeight, items, pipes, POWER, PURITY, recipes, WATER, WATER_PUMP, type Purity, type Recipe } from './game';
 
 export type Output = { item: string; rate: number; maximize: boolean };
 export type Input =
@@ -21,7 +21,9 @@ export type Settings = {
   overclock: number; // max clock for production machines, 1..2.5
   shards: number; // power shards available
   sinkSurplus: boolean;
-  powerBudget?: number; // MW the whole factory may draw (0/undefined = no limit)
+  powerBudget?: number; // MW the whole factory may draw from the grid (0/undefined = no limit)
+  selfPowered?: boolean; // build power plants in this factory for its own consumption
+  extraPower?: number; // internal: MW drawn by things outside the LP (sink), added when self-powered
 };
 
 export type Solution = {
@@ -46,7 +48,7 @@ export const minerRate = (i: Extract<Input, { kind: 'miner' }>) =>
 export function minerCap(i: Extract<Input, { kind: 'miner' }>, s: Settings) {
   const fluid = items[i.item].fluid;
   const list = (fluid ? pipes : belts).filter((b) => (fluid ? s.pipeMk : s.beltMk).includes(b.mk));
-  const cap = list.length ? list[list.length - 1].rate : Infinity;
+  const cap = list.length && !items[i.item].power ? list[list.length - 1].rate : Infinity; // geothermal power isn't on a belt
   return { one: minerRate({ ...i, count: 1 }), cap, total: Math.min(minerRate({ ...i, count: 1 }), cap) * i.count };
 }
 
@@ -78,6 +80,7 @@ export async function solve(s: Settings): Promise<Solution> {
   const max = s.outputs.filter((o) => o.maximize);
   const fixed = new Map<string, number>();
   for (const o of s.outputs) if (!o.maximize) fixed.set(o.item, (fixed.get(o.item) ?? 0) + o.rate);
+  if (s.selfPowered && s.extraPower) fixed.set(POWER, (fixed.get(POWER) ?? 0) + s.extraPower);
 
   // item balance rows: production - consumption + import - surplus - target = 0
   const rows = new Map<string, string[]>();
@@ -90,6 +93,11 @@ export async function solve(s: Settings): Promise<Solution> {
     for (const x of r.inputs) term(x.item, -x.rate, `r${i}`);
   });
   for (const o of s.outputs) if (!rows.has(o.item)) rows.set(o.item, []);
+  // self-powered: every machine's draw (at 100%; underclocked ones draw less) must come from plants built here
+  if (s.selfPowered) {
+    if (!rows.has(POWER)) rows.set(POWER, []);
+    rs.forEach((r, i) => recipePower(r) > 0 && term(POWER, -recipePower(r), `r${i}`));
+  }
   const itemIds = [...rows.keys()];
   const bounds: string[] = [];
   const cost: string[] = [];
@@ -124,12 +132,15 @@ export async function solve(s: Settings): Promise<Solution> {
     ...itemIds.flatMap((id, k) => ((avail.get(id) ?? 0) > 0 && extractMW(id) > 0 ? [`+ ${extractMW(id)} i${k}`] : [])),
   ];
   itemIds.forEach((id, k) => {
-    if ((avail.get(id) ?? 0) > 0 && extractMW(id) > 0) cost.push(`+ ${w.power * extractMW(id)} i${k}`);
+    if ((avail.get(id) ?? 0) > 0 && extractMW(id) > 0) {
+      cost.push(`+ ${w.power * extractMW(id)} i${k}`);
+      if (s.selfPowered) term(POWER, -extractMW(id), `i${k}`); // miners and water extractors need power too
+    }
   });
   for (const o of max) term(o.item, -o.rate || -1, 't');
 
   const constraints = itemIds.map((id, k) => `c${k}: ${rows.get(id)!.join(' ')} = ${fixed.get(id) ?? 0}`);
-  if (s.powerBudget && s.powerBudget > 0) constraints.push(`pw: ${powerTerms.join(' ')} <= ${s.powerBudget}`);
+  if (!s.selfPowered && s.powerBudget && s.powerBudget > 0) constraints.push(`pw: ${powerTerms.join(' ')} <= ${s.powerBudget}`);
   const lp = (obj: string, extra: string[] = []) =>
     `${obj}\nSubject To\n${[...constraints, ...extra].join('\n')}\nBounds\n${bounds.join('\n')}\nEnd`;
 
@@ -139,7 +150,7 @@ export async function solve(s: Settings): Promise<Solution> {
     if (res.Status !== 'Optimal') {
       throw new Error(
         res.Status === 'Infeasible'
-          ? `No feasible factory: inputs, unlocked recipes or buildings cannot produce the requested outputs${s.powerBudget ? ' within the power budget' : ''}.`
+          ? `No feasible factory: inputs, unlocked recipes or buildings cannot produce the requested outputs${s.selfPowered ? ' and fuel its own power plants' : s.powerBudget ? ' within the power budget' : ''}.`
           : res.Status === 'Unbounded'
             ? 'Output is unbounded – limit the raw resources (turn off "unlimited") to maximize.'
             : `Solver status: ${res.Status}`,

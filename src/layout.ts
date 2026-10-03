@@ -77,7 +77,9 @@ function segment(raw: Pt[], item: string, rate: number, s: Settings, edge?: stri
 }
 
 export const titleOf = (g: Group) =>
-  g.kind === 'recipe' ? `${g.label} · ${g.machines.length}× ${(buildings[g.building!] ?? extractors[g.building!]).name}` : g.label;
+  g.kind === 'recipe' && g.generates
+    ? `${g.machines.length}× ${g.label} · ${g.generates.toFixed(0)} MW`
+    : g.kind === 'recipe' ? `${g.label} · ${g.machines.length}× ${(buildings[g.building!] ?? extractors[g.building!]).name}` : g.label;
 const TITLE_CHAR = 7; // ≈ px per char of the 12px semibold header font
 const NOTE_CHAR = 6; // 11px info line of simple boxes
 const INFO_LINE = 15; // must match the canvas' simple-box line height
@@ -97,8 +99,8 @@ function size(g: Group, dir: Dir, s: Settings) {
   if (!g.lines.length) {
     const ports = Math.max(g.inputs.length, g.outputs.length) * 28 + 2 * PAD;
     // one info line per flow ("12.5/min Iron Plate")
-    const flows = [...g.inputs, ...g.outputs];
-    const info = Math.max(...flows.map((x) => `${x.rate.toFixed(1)}/min ${items[x.item].name}`.length)) * NOTE_CHAR + 20;
+    const flows = [...g.inputs, ...g.outputs, ...(g.generates ? [{ item: 'MW', rate: g.generates }] : [])];
+    const info = Math.max(0, ...flows.map((x) => `${x.rate.toFixed(1)}/min ${items[x.item].name}`.length)) * NOTE_CHAR + 20;
     const w = Math.max(170, tw, info);
     const h = Math.max(64, 44 + flows.length * INFO_LINE);
     return dir === 'TB' ? { width: Math.max(w, ports), height: h } : { width: w, height: Math.max(h, HEAD + ports) };

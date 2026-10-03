@@ -4,7 +4,7 @@ import { loadFactories, newFactory, saveFactories, type Factories, type Factory 
 import FactoryCanvas from './FactoryCanvas';
 import WiringDiagram from './WiringDiagram';
 import {
-  TIER_COLORS, type ColorBy, belts, buildings, extractors, fmt, icon, itemIcon, items, nameOf, pipes, producible, rawItems, recipes, WATER_PUMP, type Purity,
+  POWER, unit, TIER_COLORS, type ColorBy, belts, buildings, extractors, fmt, icon, itemIcon, items, nameOf, pipes, producible, rawItems, recipes, WATER_PUMP, type Purity,
 } from './game';
 import { autoArrange, geometry, type Dir, type Pt } from './layout';
 import { solvePlan, type Plan } from './plan';
@@ -110,7 +110,7 @@ export default function App() {
     const s0 = load();
     const f0 = loadFactories({ outputs: s0.outputs, inputs: s0.inputs });
     const a = f0.list.find((x) => x.id === f0.active);
-    return { s: { ...s0, outputs: a?.outputs ?? [], inputs: a?.inputs ?? [], powerBudget: a?.powerBudget }, f: f0 };
+    return { s: { ...s0, outputs: a?.outputs ?? [], inputs: a?.inputs ?? [], powerBudget: a?.powerBudget, selfPowered: a?.selfPowered }, f: f0 };
   });
   const [s, setS] = useState<Settings>(init.s);
   const set = (patch: Partial<Settings>) => setS((p) => ({ ...p, ...patch }));
@@ -142,20 +142,20 @@ export default function App() {
   // ---- factories: the active one is the live editor state (autosaved); unlocks/options live in `s` and are shared
   const current = useMemo<Factories>(() => ({
     ...fac,
-    list: fac.list.map((x) => (x.id === fac.active ? { ...x, outputs: s.outputs, inputs: s.inputs, powerBudget: s.powerBudget, dir, moved } : x)),
-  }), [fac, s.outputs, s.inputs, s.powerBudget, dir, moved]);
+    list: fac.list.map((x) => (x.id === fac.active ? { ...x, outputs: s.outputs, inputs: s.inputs, powerBudget: s.powerBudget, selfPowered: s.selfPowered, dir, moved } : x)),
+  }), [fac, s.outputs, s.inputs, s.powerBudget, s.selfPowered, dir, moved]);
   useEffect(() => saveFactories(current), [current]);
   const patchActive = (patch: Partial<Factory>) =>
     setFac((f) => ({ ...f, list: f.list.map((x) => (x.id === f.active ? { ...x, ...patch, updated: Date.now() } : x)) }));
   const open = (x: Factory) => {
     setFac({ list: current.list, active: x.id });
-    setS((p) => ({ ...p, outputs: x.outputs, inputs: x.inputs, powerBudget: x.powerBudget }));
+    setS((p) => ({ ...p, outputs: x.outputs, inputs: x.inputs, powerBudget: x.powerBudget, selfPowered: x.selfPowered }));
     setDir(x.dir);
     setMoved(x.moved);
   };
   const addFactory = (x: Factory) => {
     setFac({ list: [...current.list, x], active: x.id });
-    setS((p) => ({ ...p, outputs: x.outputs, inputs: x.inputs, powerBudget: x.powerBudget }));
+    setS((p) => ({ ...p, outputs: x.outputs, inputs: x.inputs, powerBudget: x.powerBudget, selfPowered: x.selfPowered }));
     setDir(x.dir);
     setMoved(x.moved);
     setTab('factories');
@@ -203,6 +203,8 @@ export default function App() {
   const updInput = (k: number, patch: Partial<Input>) =>
     set({ inputs: s.inputs.map((x, i) => (i === k ? ({ ...x, ...patch } as Input) : x)) });
   const maxCount = s.outputs.filter((o) => o.maximize).length;
+  const inputItems = useMemo(() => [...rawItems, ...Object.keys(items).filter((i) => !items[i].raw && i !== POWER).sort((a, b) => nameOf(a).localeCompare(nameOf(b)))], []);
+  const generatorsOn = s.buildings.some((b) => buildings[b]?.generates);
   const enabledExtractors = Object.values(extractors).filter((e) => s.buildings.includes(e.id));
   // only items the unlocked recipes/buildings can make
   const makeable = useMemo(() => {
@@ -248,7 +250,7 @@ export default function App() {
                     disabled={o.maximize && maxCount === 1}
                     title={o.maximize ? (maxCount > 1 ? 'Ratio between the maximized outputs' : 'Maximized: as much as possible') : 'Items per minute'}
                     onChange={(e) => set({ outputs: s.outputs.map((x, i) => (i === k ? { ...x, rate: +e.target.value } : x)) })} />
-                  <span className={`unit${o.maximize && maxCount === 1 ? ' dim' : ''}`}>{o.maximize ? (maxCount > 1 ? 'ratio' : 'max') : '/min'}</span>
+                  <span className={`unit${o.maximize && maxCount === 1 ? ' dim' : ''}`}>{o.maximize ? (maxCount > 1 ? 'ratio' : 'max') : unit(o.item)}</span>
                   <label className="chk" title="Maximize this output with the available inputs">
                     <input type="checkbox" checked={o.maximize}
                       onChange={(e) => set({ outputs: s.outputs.map((x, i) => (i === k ? { ...x, maximize: e.target.checked } : x)) })} />Max
@@ -261,14 +263,28 @@ export default function App() {
             </section>
 
             <section>
-              <h2>Power limit</h2>
-              <div className="row">
-                <input type="number" min={0} step="any" placeholder="No limit" aria-label="Power limit in MW" value={s.powerBudget || ''}
-                  onChange={(e) => set({ powerBudget: Math.max(0, +e.target.value) || undefined })} />
-                <span className="unit">MW</span>
-                {s.powerBudget ? <button className="x" aria-label="Remove power limit" onClick={() => set({ powerBudget: undefined })}>×</button> : null}
+              <h2>Power</h2>
+              <div className="seg" role="radiogroup" aria-label="Power source">
+                <button role="radio" aria-checked={!s.selfPowered} className={s.selfPowered ? '' : 'on'} onClick={() => set({ selfPowered: false })}>From the grid</button>
+                <button role="radio" aria-checked={!!s.selfPowered} className={s.selfPowered ? 'on' : ''} onClick={() => set({ selfPowered: true })}>Own power plants</button>
               </div>
-              <p className="hint">Includes miners. With Max, makes as much as fits.</p>
+              {s.selfPowered ? (
+                <p className="hint">
+                  Power plants and their fuel are planned inside this factory, covering machines, miners and pumps.
+                  {!generatorsOn && <> <b>Unlock a generator</b> in the Unlocks tab first.</>}
+                </p>
+              ) : (
+                <>
+                  <div className="row">
+                    <input type="number" min={0} step="any" placeholder="No limit" aria-label="Power limit in MW" value={s.powerBudget || ''}
+                      onChange={(e) => set({ powerBudget: Math.max(0, +e.target.value) || undefined })} />
+                    <span className="unit">MW limit</span>
+                    {s.powerBudget ? <button className="x" aria-label="Remove power limit" onClick={() => set({ powerBudget: undefined })}>×</button> : null}
+                  </div>
+                  <p className="hint">Includes miners. With Max, makes as much as fits.</p>
+                </>
+              )}
+              <p className="hint">To plan a power plant on its own, add <b>Power</b> as an output (in MW).</p>
             </section>
 
             <section>
@@ -277,7 +293,7 @@ export default function App() {
                 <div className="row wrap" key={k}>
                   {inp.kind === 'rate' ? (
                     <>
-                      <ItemSelect value={inp.item} options={[...rawItems, ...producible.filter((i) => !items[i].raw)]} onChange={(item) => updInput(k, { item })} />
+                      <ItemSelect value={inp.item} options={inputItems} onChange={(item) => updInput(k, { item })} />
                       <input type="number" min={0} step="any" value={inp.rate} onChange={(e) => updInput(k, { rate: +e.target.value })} />
                       <span className="unit">/min</span>
                     </>
@@ -303,8 +319,8 @@ export default function App() {
                           </select>
                         )}
                         <label className="mini">Count <input type="number" min={1} step={1} value={inp.count} onChange={(e) => updInput(k, { count: Math.max(1, Math.round(+e.target.value)) })} /></label>
-                        <label className="mini">Clock <input type="number" min={1} max={250} step={1} value={Math.round(inp.clock * 100)} onChange={(e) => updInput(k, { clock: Math.min(2.5, Math.max(0.01, +e.target.value / 100)) })} />%</label>
-                        <span className="unit">= {fmt(minerRate(inp))}/min</span>
+                        {inp.item !== POWER && <label className="mini">Clock <input type="number" min={1} max={250} step={1} value={Math.round(inp.clock * 100)} onChange={(e) => updInput(k, { clock: Math.min(2.5, Math.max(0.01, +e.target.value / 100)) })} />%</label>}
+                        <span className="unit">= {fmt(minerRate(inp))} {inp.item === POWER ? 'MW (average)' : '/min'}</span>
                       </div>
                     </div>
                   )}
@@ -417,7 +433,7 @@ export default function App() {
         )}
         <footer>
           <div className="row">
-            <button onClick={() => { if (confirm('Reset unlocks and options? Factories are kept.')) setS((p) => ({ ...DEFAULTS, outputs: p.outputs, inputs: p.inputs, powerBudget: p.powerBudget })); }}>Reset unlocks & options</button>
+            <button onClick={() => { if (confirm('Reset unlocks and options? Factories are kept.')) setS((p) => ({ ...DEFAULTS, outputs: p.outputs, inputs: p.inputs, powerBudget: p.powerBudget, selfPowered: p.selfPowered })); }}>Reset unlocks & options</button>
             <a className="kofi" href="https://ko-fi.com/mareklackowski" target="_blank" rel="noopener noreferrer">☕ Buy me a coffee</a>
           </div>
           <p className="legal">
@@ -469,7 +485,7 @@ export default function App() {
             onMoveNode={(id, p) => setMoved((m) => ({ ...m, [id]: p }))} />
         )}
         {result && 'info' in result && <div className="info">{result.info}</div>}
-        {plan && <Summary plan={plan} budget={s.powerBudget} />}
+        {plan && <Summary plan={plan} budget={s.selfPowered ? undefined : s.powerBudget} selfPowered={s.selfPowered} />}
         </>)}
       </main>
     </div>
@@ -482,7 +498,7 @@ const List = ({ rows }: { rows: [string, string, string][] }) => (
   </ul>
 );
 
-function Summary({ plan, budget }: { plan: Plan; budget?: number }) {
+function Summary({ plan, budget, selfPowered }: { plan: Plan; budget?: number; selfPowered?: boolean }) {
   const machines = plan.groups.filter((g) => g.kind === 'recipe');
   const sources = plan.groups.filter((g) => g.kind === 'extract' || g.kind === 'input');
   const outs = plan.groups.filter((g) => g.kind === 'output' || g.kind === 'sink');
@@ -500,8 +516,18 @@ function Summary({ plan, budget }: { plan: Plan; budget?: number }) {
         <div>
           <h3>Inputs used</h3>
           <List rows={sources.flatMap((g) => g.outputs.map((f) => [itemIcon(f.item), g.label, `${fmt(f.rate)}/min`] as [string, string, string]))} />
+          {plan.generated > 0 && (
+            <>
+              <h3>Power</h3>
+              <List rows={[
+                ...plan.groups.filter((g) => g.generates).map((g) => [icon(nameOf(g.building!)), g.label, `+${fmt(g.generates!)} MW`] as [string, string, string]),
+                [itemIcon(POWER), 'Used by machines', `−${fmt(plan.power)} MW`],
+                [itemIcon(POWER), selfPowered ? (plan.generated >= plan.power ? 'Spare' : 'Missing') : plan.generated >= plan.power ? 'Net to grid' : 'Net from grid', `${fmt(plan.generated - plan.power)} MW`],
+              ]} />
+            </>
+          )}
           <h3>Outputs</h3>
-          <List rows={outs.flatMap((g) => g.inputs.map((f) => [itemIcon(f.item), `${g.kind === 'sink' ? 'Sink: ' : g.id === 'surplus' ? 'Surplus: ' : ''}${nameOf(f.item)}`, `${fmt(f.rate)}/min`] as [string, string, string]))} />
+          <List rows={outs.flatMap((g) => g.inputs.map((f) => [itemIcon(f.item), `${g.kind === 'sink' ? 'Sink: ' : g.id === 'surplus' ? 'Surplus: ' : ''}${nameOf(f.item)}`, f.item === POWER ? `${fmt(f.rate)} MW` : `${fmt(f.rate)}/min`] as [string, string, string]))} />
         </div>
         <div>
           <h3>Production</h3>

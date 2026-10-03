@@ -1,7 +1,7 @@
 import data from './data/game.json';
 
 export type Flow = { item: string; rate: number };
-export type Item = { id: string; name: string; fluid: boolean; raw: boolean; sink: number; color: number[] | null };
+export type Item = { id: string; name: string; fluid: boolean; raw: boolean; sink: number; color: number[] | null; power?: boolean };
 export type Building = { id: string; name: string; power: number; variable?: boolean; exp: number; generates?: number }; // generates: MW of a power plant
 export type Extractor = { id: string; name: string; power: number; exp: number; rate: number; resources: string[] };
 export type Conveyor = { id: string; name: string; mk: number; rate: number };
@@ -23,6 +23,7 @@ export const SPLITTER = 'Build_ConveyorAttachmentSplitter_C';
 export const MERGER = 'Build_ConveyorAttachmentMerger_C';
 export const JUNCTION = 'Build_PipelineJunction_Cross_C';
 export const WATER = 'Desc_Water_C';
+export const POWER = 'MW'; // electricity as an item: made by power plants, used by machines (rates in MW, not /min)
 export const WATER_PUMP = 'Build_WaterPump_C';
 
 export const PURITY = { impure: 0.5, normal: 1, pure: 2 } as const;
@@ -37,10 +38,13 @@ const WORLD: Record<string, number> = {
 const avgWorld = Object.values(WORLD).reduce((a, b) => a + b, 0) / Object.keys(WORLD).length;
 /** cost of importing 1/min of an item: scarcity for raw, small for water, sink-value based for intermediates */
 export const importWeight = (id: string) =>
-  id === WATER ? 0.001 : WORLD[id] ? avgWorld / WORLD[id] : 1 + items[id].sink / 100;
+  id === WATER || id === POWER ? 0.001 : WORLD[id] ? avgWorld / WORLD[id] : 1 + items[id].sink / 100;
 
 export const icon = (name: string) => `${import.meta.env?.BASE_URL ?? "/"}icons/${name.replace(/[^\w.-]+/g, '_')}.png`;
-export const itemIcon = (id: string) => icon(items[id]?.name ?? id);
+export const itemIcon = (id: string) => icon(id === POWER ? 'Power Shard' : (items[id]?.name ?? id));
+/** "12.5/min Iron Plate" or "600 MW" */
+export const amount = (id: string, rate: number) => (id === POWER ? `${fmt(rate)} MW` : `${fmt(rate)}/min ${nameOf(id)}`);
+export const unit = (id: string) => (id === POWER ? 'MW' : '/min');
 const EXTRA: Record<string, string> = {
   [SPLITTER]: 'Conveyor Splitter', [MERGER]: 'Conveyor Merger', [JUNCTION]: 'Pipeline Junction',
 };

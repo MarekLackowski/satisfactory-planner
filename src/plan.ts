@@ -1,5 +1,5 @@
 import {
-  belts, buildings, costs, extractors, items, JUNCTION, MERGER, nameOf, pipes, recipeById, SPLITTER, WATER, WATER_PUMP,
+  belts, buildings, costs, extractors, items, JUNCTION, MERGER, nameOf, pipes, POWER, recipeById, SPLITTER, WATER, WATER_PUMP,
   type Conveyor, type Flow,
 } from './game';
 import { minerCap, solve, type Settings, type Solution } from './solver';
@@ -22,6 +22,7 @@ export type Group = {
   inputs: Flow[];
   outputs: Flow[];
   power: number;
+  generates?: number; // MW made here (power plants, geothermal)
   note?: string;
 };
 export type Edge = {
@@ -151,7 +152,9 @@ export function buildPlan(sol: Solution, s: Settings): Plan {
         power: machines.reduce((a, m) => a + e.power * m.clock ** e.exp, 0),
         note: inp.count > n ? `${n} of ${inp.count} available extractors needed (${inp.count - n} spare)` : undefined,
       };
-      buildLines(g, (m) => ({ inputs: [], outputs: [{ item: inp.item, rate: (one * m.clock) / inp.clock }] }), s);
+      if (inp.item === POWER) {
+        Object.assign(g, { outputs: [], generates: used, note: `Generates ${used.toFixed(0)} MW${g.note ? ` · ${g.note}` : ''}` });
+      } else buildLines(g, (m) => ({ inputs: [], outputs: [{ item: inp.item, rate: (one * m.clock) / inp.clock }] }), s);
       groups.push(g);
     }
   });
@@ -183,15 +186,19 @@ export function buildPlan(sol: Solution, s: Settings): Plan {
     const b = buildings[r.building];
     const base = r.power ?? b.power;
     const machines = clocks(x, s, shardsLeft);
+    const mw = r.outputs.find((f) => f.item === POWER)?.rate ?? 0; // per plant at 100%
+    const things = r.outputs.filter((f) => f.item !== POWER); // power isn't carried on belts
+    const generates = mw * machines.reduce((a, m) => a + m.clock, 0);
     const g: Group = {
       id: rid, kind: 'recipe', label: r.name, building: r.building, recipe: rid, machines, lines: [],
       inputs: r.inputs.map((f) => ({ item: f.item, rate: f.rate * x })),
-      outputs: r.outputs.map((f) => ({ item: f.item, rate: f.rate * x })),
+      outputs: things.map((f) => ({ item: f.item, rate: f.rate * x })),
       power: machines.reduce((a, m) => a + base * m.clock ** b.exp, 0),
-      note: b.generates ? `Generates ${(machines.reduce((a, m) => a + m.clock, 0) * b.generates).toFixed(0)} MW` : undefined,
+      generates: mw ? generates : undefined,
+      note: mw ? `Generates ${generates.toFixed(0)} MW` : undefined,
     };
     const scale = (l: Flow[], c: number) => l.map((f) => ({ item: f.item, rate: f.rate * c }));
-    buildLines(g, (m) => ({ inputs: scale(r.inputs, m.clock), outputs: scale(r.outputs, m.clock) }), s);
+    buildLines(g, (m) => ({ inputs: scale(r.inputs, m.clock), outputs: scale(things, m.clock) }), s);
     groups.push(g);
   }
 
@@ -199,10 +206,10 @@ export function buildPlan(sol: Solution, s: Settings): Plan {
   for (const [item, rate] of sol.produced) {
     groups.push({ id: `out_${item}`, kind: 'output', label: `Output: ${nameOf(item)}`, machines: [], lines: [], inputs: [{ item, rate }], outputs: [], power: 0 });
   }
-  const solidSurplus = [...sol.surplus].filter(([i]) => !items[i].fluid);
+  const solidSurplus = [...sol.surplus].filter(([i]) => !items[i].fluid && i !== POWER);
   const fluidSurplus = [...sol.surplus].filter(([i]) => items[i].fluid);
   if (solidSurplus.length && s.sinkSurplus) {
-    groups.push({ id: 'sink', kind: 'sink', label: 'AWESOME Sink', machines: [], lines: [], inputs: solidSurplus.map(([item, rate]) => ({ item, rate })), outputs: [], power: 30 * solidSurplus.length });
+    groups.push({ id: 'sink', kind: 'sink', label: 'AWESOME Sink', machines: [], lines: [], inputs: solidSurplus.map(([item, rate]) => ({ item, rate })), outputs: [], power: 30 * Math.max(1, Math.ceil(solidSurplus.reduce((a, [, r]) => a + r, 0) / maxConveyor(false, s).rate - EPS)) }); // one sink per belt of surplus
   }
   const leftover = s.sinkSurplus ? fluidSurplus : [...solidSurplus, ...fluidSurplus];
   if (leftover.length) {
@@ -290,7 +297,8 @@ export function buildPlan(sol: Solution, s: Settings): Plan {
   const power = groups.reduce((a, g) => a + g.power, 0);
   if (shardsLeft.n < 0) warnings.push('Not enough power shards.');
   if (s.powerBudget && power > s.powerBudget + 0.05) warnings.push(`Uses ${power.toFixed(1)} MW, over the ${s.powerBudget} MW budget (overclocking or the AWESOME Sink draw more than planned).`);
-  const generated = groups.reduce((a, g) => a + (g.building && buildings[g.building]?.generates ? g.machines.reduce((x, m) => x + m.clock, 0) * buildings[g.building].generates! : 0), 0);
+  const generated = groups.reduce((a, g) => a + (g.generates ?? 0), 0);
+  if (s.selfPowered && generated < power - 0.5) warnings.push(`Power plants make ${generated.toFixed(0)} MW but the factory needs ${power.toFixed(0)} MW.`);
   return { groups, edges, power, cost, buildingCount: count, warnings, wirings, generated };
 }
 
@@ -301,6 +309,11 @@ export function buildPlan(sol: Solution, s: Settings): Plan {
  */
 export async function solvePlan(s: Settings): Promise<Plan> {
   let best = buildPlan(await solve(s), s);
+  // self-powered: the LP can't see draws that only appear in the plan (AWESOME Sink), so add what's missing and re-solve
+  for (let i = 0, extra = 0; s.selfPowered && i < 3 && best.generated < best.power - 0.5; i++) {
+    extra += best.power - best.generated + 0.5;
+    best = buildPlan(await solve({ ...s, extraPower: extra }), s);
+  }
   const B = s.powerBudget;
   if (!B || !s.outputs.some((o) => o.maximize)) return best;
   let lo = B;

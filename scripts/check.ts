@@ -189,6 +189,48 @@ for (const item of ['Desc_PlutoniumPellet_C', 'Desc_PlutoniumFuelRod_C', 'Desc_N
   await assert.rejects(solvePlan({ ...s, buildings: s.buildings.filter((b) => b !== 'Build_GeneratorNuclear_C') }), /No feasible/);
 }
 
+// 2k) power planning
+{
+  const coalOnly = (s: Settings): Settings => ({ ...s, buildings: s.buildings.filter((b) => !b.startsWith('Build_Generator') || b === 'Build_GeneratorCoal_C') });
+  // a 600 MW coal plant: 8 generators (75 MW), 120 coal/min, 360 m³ water/min
+  {
+    const s = coalOnly({ ...base, outputs: [{ item: 'MW', rate: 600, maximize: false }] });
+    const p = await solvePlan(s);
+    const gen = p.groups.find((g) => g.building === 'Build_GeneratorCoal_C')!;
+    assert.equal(gen.machines.length, 8);
+    near(gen.inputs.find((f) => f.item === 'Desc_Coal_C')!.rate, 120, 'coal');
+    near(gen.inputs.find((f) => f.item === 'Desc_Water_C')!.rate, 360, 'water');
+    near(p.generated, 600, 'generated');
+    assert.ok(!p.edges.some((e) => e.item === 'MW'), 'power is never a belt');
+  }
+  // self-powered: plants are added for the factory's own draw (machines + miners + water extractors)
+  {
+    const s = coalOnly({ ...base, selfPowered: true, outputs: [{ item: 'Desc_IronPlate_C', rate: 60, maximize: false }] });
+    const p = await solvePlan(s);
+    assert.ok(p.groups.some((g) => g.building === 'Build_GeneratorCoal_C'), 'coal plant built');
+    assert.ok(p.generated >= p.power - 0.5, `generated ${p.generated} for ${p.power}`);
+    assert.ok(!p.warnings.some((w) => w.includes('need')), p.warnings.join());
+    await assert.rejects(solvePlan({ ...s, buildings: s.buildings.filter((b) => !b.startsWith('Build_Generator')) }), /fuel its own power plants/);
+  }
+  // self-powered with an AWESOME Sink (its 30 MW only appears in the plan): still fully covered
+  {
+    const s: Settings = { ...base, selfPowered: true, cheapBelts: true, beltMk: [1, 2, 3, 4], buildings: base.buildings.filter((b) => b !== 'Build_GeneratorNuclear_C' && b !== 'Build_Converter_C'), outputs: [{ item: 'Desc_IronPlateReinforced_C', rate: 10, maximize: false }] };
+    const p = await solvePlan(s);
+    assert.ok(p.generated >= p.power - 0.5, `generated ${p.generated.toFixed(1)} for ${p.power.toFixed(1)} MW`);
+  }
+  // geothermal on 2 pure geysers: 800 MW, nothing on belts
+  {
+    const s: Settings = {
+      ...base, unlimitedRaw: false,
+      outputs: [{ item: 'MW', rate: 1, maximize: true }],
+      inputs: [{ kind: 'miner', extractor: 'Build_GeneratorGeoThermal_C', item: 'MW', purity: 'pure', count: 2, clock: 1 }],
+    };
+    const p = await solvePlan(s);
+    near(p.generated, 800, 'geothermal');
+    assert.equal(p.edges.length, 0);
+  }
+}
+
 // 3) infeasible: no buildings
 await assert.rejects(solve({ ...base, buildings: [], outputs: [{ item: 'Desc_IronPlate_C', rate: 10, maximize: false }] }));
 

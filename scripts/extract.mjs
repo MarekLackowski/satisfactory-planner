@@ -111,31 +111,44 @@ for (const s of byNative.FGSchematic.filter((s) => s.mType === 'EST_Alternate'))
   for (const u of s.mUnlocks ?? []) for (const m of (u.mRecipes ?? '').matchAll(/(\w+_C)'/g)) hardDrive.add(m[1]);
 for (const r of recipes) r.alt = hardDrive.has(r.id);
 
-// Nuclear Power Plant as a producer: burning fuel rods is the only source of Uranium/Plutonium Waste
-// (needed for every plutonium recipe). Its power is generated, so it consumes 0 and reports what it makes.
-for (const c of byNative.FGBuildableGeneratorNuclear ?? []) {
-  const mw = num(c.mPowerProduction);
-  buildings[c.ClassName] = { id: c.ClassName, name: c.mDisplayName, power: 0, exp: 1, generates: mw };
-  const fuelDescs = Object.fromEntries(all('FGItemDescriptorNuclearFuel').map((x) => [x.ClassName, x]));
-  for (const f of c.mFuel) {
-    const fuel = fuelDescs[f.mFuelClass];
-    if (!fuel || !items[f.mFuelClass]) continue;
-    const dur = num(fuel.mEnergyValue) / mw; // seconds per rod at full power
-    const waterPerMin = num(c.mSupplementalToPowerRatio) * mw * 60 / 1000; // m³/min
+// ---- power plants: power ("MW") is an item they produce from fuel, so the LP can plan electricity like any part.
+// Generators draw nothing themselves; fuel/s = MW / energy (MJ per item, or per litre for fluids).
+// A Nuclear Power Plant is also the only source of Uranium/Plutonium Waste (needed for every plutonium recipe).
+const POWER = 'MW';
+items[POWER] = { id: POWER, name: 'Power', fluid: false, raw: false, power: true, sink: 0, color: null };
+const energy = Object.fromEntries(docs.flatMap((x) => x.Classes).filter((x) => x.mEnergyValue !== undefined).map((x) => [x.ClassName, num(x.mEnergyValue)]));
+for (const g of all('FGBuildableGeneratorFuel', 'FGBuildableGeneratorNuclear')) {
+  const mw = num(g.mPowerProduction);
+  buildings[g.ClassName] = { id: g.ClassName, name: g.mDisplayName, power: 0, exp: 1, generates: mw };
+  for (const f of g.mFuel ?? []) {
+    if (!items[f.mFuelClass] || !energy[f.mFuelClass]) continue;
+    const fluid = items[f.mFuelClass].fluid;
+    const perSec = mw / energy[f.mFuelClass]; // items (or litres) per second
+    const water = num(g.mSupplementalToPowerRatio ?? '0') * mw; // litres per second
     recipes.push({
-      id: `Gen_${c.ClassName}_${f.mFuelClass}`,
-      name: `${c.mDisplayName} (${items[f.mFuelClass].name})`,
+      id: `Gen_${g.ClassName}_${f.mFuelClass}`,
+      name: `${g.mDisplayName} (${items[f.mFuelClass].name})`,
       alt: false,
-      building: c.ClassName,
-      duration: dur,
-      inputs: [{ item: f.mFuelClass, rate: 60 / dur }, { item: f.mSupplementalResourceClass, rate: waterPerMin }],
-      outputs: f.mByproduct ? [{ item: f.mByproduct, rate: (+f.mByproductAmount * 60) / dur }] : [],
+      building: g.ClassName,
+      duration: fluid ? 60 : 1 / perSec,
+      inputs: [
+        { item: f.mFuelClass, rate: fluid ? (perSec * 60) / 1000 : perSec * 60 },
+        ...(f.mSupplementalResourceClass && water ? [{ item: f.mSupplementalResourceClass, rate: (water * 60) / 1000 }] : []),
+      ],
+      outputs: [
+        { item: POWER, rate: mw },
+        ...(f.mByproduct && items[f.mByproduct] ? [{ item: f.mByproduct, rate: +f.mByproductAmount * perSec * 60 }] : []),
+      ],
     });
   }
 }
+// geothermal: placed on a geyser like a miner; average output impure/normal/pure = 100/200/400 MW (purity multipliers)
+for (const g of byNative.FGBuildableGeneratorGeoThermal ?? []) {
+  extractors[g.ClassName] = { id: g.ClassName, name: g.mDisplayName, power: 0, exp: 1, rate: 200, resources: [POWER] };
+}
 
 // keep only items used by recipes (plus raw)
-const used = new Set([...resourceIds]);
+const used = new Set([...resourceIds, POWER]);
 for (const r of recipes) for (const x of [...r.inputs, ...r.outputs]) used.add(x.item);
 for (const k of Object.keys(items)) if (!used.has(k)) delete items[k];
 
