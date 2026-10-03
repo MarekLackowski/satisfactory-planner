@@ -150,7 +150,11 @@ export function buildPlan(sol: Solution, s: Settings): Plan {
         id: `ex${k}`, kind: 'extract', label: `${e.name} · ${inp.purity} ${nameOf(inp.item)}`, building: e.id,
         machines, lines: [], inputs: [], outputs: [{ item: inp.item, rate: used }],
         power: machines.reduce((a, m) => a + e.power * m.clock ** e.exp, 0),
-        note: inp.count > n ? `${n} of ${inp.count} available extractors needed (${inp.count - n} spare)` : undefined,
+        note: [
+          inp.count > n ? `${n} of ${inp.count} available extractors needed (${inp.count - n} spare)` : '',
+          one > cap + EPS ? `belt carries only ${cap}/min each` : '',
+          used < total - 0.05 ? `only ${used.toFixed(1)}/min needed` : '',
+        ].filter(Boolean).join(' · ') || undefined,
       };
       if (inp.item === POWER) {
         Object.assign(g, { outputs: [], generates: used, note: `Generates ${used.toFixed(0)} MW${g.note ? ` · ${g.note}` : ''}` });

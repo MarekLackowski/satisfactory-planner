@@ -10,6 +10,8 @@ export type Factory = {
   inputs: Settings['inputs'];
   powerBudget?: number; // MW limit for this factory
   selfPowered?: boolean; // builds its own power plants
+  overclock?: number; // max clock for production machines (1..2.5)
+  shards?: number; // power shards set aside for this factory's machines
   dir: Dir;
   moved: Record<string, Pt>;
   updated: number;

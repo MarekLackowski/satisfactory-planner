@@ -8,7 +8,7 @@ import {
 } from './game';
 import { autoArrange, geometry, type Dir, type Pt } from './layout';
 import { solvePlan, type Plan } from './plan';
-import { enabledRecipes, minerRate, type Input, type Settings } from './solver';
+import { enabledRecipes, minerCap, minerRate, type Input, type Settings } from './solver';
 
 const STORE = 'satisfactory-calc-v2';
 const ALL_BUILDINGS = [...Object.keys(buildings), ...Object.keys(extractors)];
@@ -110,7 +110,7 @@ export default function App() {
     const s0 = load();
     const f0 = loadFactories({ outputs: s0.outputs, inputs: s0.inputs });
     const a = f0.list.find((x) => x.id === f0.active);
-    return { s: { ...s0, outputs: a?.outputs ?? [], inputs: a?.inputs ?? [], powerBudget: a?.powerBudget, selfPowered: a?.selfPowered }, f: f0 };
+    return { s: { ...s0, outputs: a?.outputs ?? [], inputs: a?.inputs ?? [], powerBudget: a?.powerBudget, selfPowered: a?.selfPowered, overclock: a?.overclock ?? 1, shards: a?.shards ?? 0 }, f: f0 };
   });
   const [s, setS] = useState<Settings>(init.s);
   const set = (patch: Partial<Settings>) => setS((p) => ({ ...p, ...patch }));
@@ -142,20 +142,20 @@ export default function App() {
   // ---- factories: the active one is the live editor state (autosaved); unlocks/options live in `s` and are shared
   const current = useMemo<Factories>(() => ({
     ...fac,
-    list: fac.list.map((x) => (x.id === fac.active ? { ...x, outputs: s.outputs, inputs: s.inputs, powerBudget: s.powerBudget, selfPowered: s.selfPowered, dir, moved } : x)),
-  }), [fac, s.outputs, s.inputs, s.powerBudget, s.selfPowered, dir, moved]);
+    list: fac.list.map((x) => (x.id === fac.active ? { ...x, outputs: s.outputs, inputs: s.inputs, powerBudget: s.powerBudget, selfPowered: s.selfPowered, overclock: s.overclock, shards: s.shards, dir, moved } : x)),
+  }), [fac, s.outputs, s.inputs, s.powerBudget, s.selfPowered, s.overclock, s.shards, dir, moved]);
   useEffect(() => saveFactories(current), [current]);
   const patchActive = (patch: Partial<Factory>) =>
     setFac((f) => ({ ...f, list: f.list.map((x) => (x.id === f.active ? { ...x, ...patch, updated: Date.now() } : x)) }));
   const open = (x: Factory) => {
     setFac({ list: current.list, active: x.id });
-    setS((p) => ({ ...p, outputs: x.outputs, inputs: x.inputs, powerBudget: x.powerBudget, selfPowered: x.selfPowered }));
+    setS((p) => ({ ...p, outputs: x.outputs, inputs: x.inputs, powerBudget: x.powerBudget, selfPowered: x.selfPowered, overclock: x.overclock ?? 1, shards: x.shards ?? 0 }));
     setDir(x.dir);
     setMoved(x.moved);
   };
   const addFactory = (x: Factory) => {
     setFac({ list: [...current.list, x], active: x.id });
-    setS((p) => ({ ...p, outputs: x.outputs, inputs: x.inputs, powerBudget: x.powerBudget, selfPowered: x.selfPowered }));
+    setS((p) => ({ ...p, outputs: x.outputs, inputs: x.inputs, powerBudget: x.powerBudget, selfPowered: x.selfPowered, overclock: x.overclock ?? 1, shards: x.shards ?? 0 }));
     setDir(x.dir);
     setMoved(x.moved);
     setTab('factories');
@@ -288,6 +288,21 @@ export default function App() {
             </section>
 
             <section>
+              <h2>Overclocking</h2>
+              <div className="row">
+                <label className="mini">Power shards for machines
+                  <input type="number" min={0} step={1} value={s.shards} onChange={(e) => set({ shards: Math.max(0, Math.round(+e.target.value)), overclock: +e.target.value > 0 && s.overclock <= 1 ? 2.5 : s.overclock })} />
+                </label>
+                <label className="mini">up to
+                  <select value={s.overclock} disabled={!s.shards} onChange={(e) => set({ overclock: +e.target.value })}>
+                    {[1, 1.5, 2, 2.5].map((c) => <option key={c} value={c}>{c * 100}%</option>)}
+                  </select>
+                </label>
+              </div>
+              <p className="hint">Overclocked machines replace extra buildings: each shard adds 50% to one machine (3 shards = 250%), used on the biggest groups first. Miner clocks are set on each miner below.</p>
+            </section>
+
+            <section>
               <h2>Inputs</h2>
               {s.inputs.map((inp, k) => (
                 <div className="row wrap" key={k}>
@@ -321,6 +336,10 @@ export default function App() {
                         <label className="mini">Count <input type="number" min={1} step={1} value={inp.count} onChange={(e) => updInput(k, { count: Math.max(1, Math.round(+e.target.value)) })} /></label>
                         {inp.item !== POWER && <label className="mini">Clock <input type="number" min={1} max={250} step={1} value={Math.round(inp.clock * 100)} onChange={(e) => updInput(k, { clock: Math.min(2.5, Math.max(0.01, +e.target.value / 100)) })} />%</label>}
                         <span className="unit">= {fmt(minerRate(inp))} {inp.item === POWER ? 'MW (average)' : '/min'}</span>
+                        {(() => {
+                          const { one, cap } = minerCap(inp, s);
+                          return one > cap + 1e-6 ? <span className="warn-inline">Best unlocked {items[inp.item].fluid ? 'pipe' : 'belt'} carries {fmt(cap)}/min, so each one ships {fmt(cap)}/min.</span> : null;
+                        })()}
                       </div>
                     </div>
                   )}
@@ -360,14 +379,6 @@ export default function App() {
               <label className="chk"><input type="checkbox" checked={s.cheapBelts} onChange={(e) => set({ cheapBelts: e.target.checked })} />Use cheapest sufficient belt/pipe tier per segment</label>
               <label className="chk"><input type="checkbox" checked={s.underclockLast} onChange={(e) => set({ underclockLast: e.target.checked })} />Underclock only the last machine (otherwise all evenly)</label>
               <label className="chk"><input type="checkbox" checked={s.sinkSurplus} onChange={(e) => set({ sinkSurplus: e.target.checked })} />Send solid surplus to AWESOME Sink</label>
-              <div className="row">
-                <label className="mini">Max overclock
-                  <select value={s.overclock} onChange={(e) => set({ overclock: +e.target.value })}>
-                    {[1, 1.5, 2, 2.5].map((c) => <option key={c} value={c}>{c * 100}%</option>)}
-                  </select>
-                </label>
-                <label className="mini">Power shards <input type="number" min={0} step={1} value={s.shards} onChange={(e) => set({ shards: Math.max(0, Math.round(+e.target.value)) })} /></label>
-              </div>
             </section>
           </div>
         ) : (
@@ -433,7 +444,7 @@ export default function App() {
         )}
         <footer>
           <div className="row">
-            <button onClick={() => { if (confirm('Reset unlocks and options? Factories are kept.')) setS((p) => ({ ...DEFAULTS, outputs: p.outputs, inputs: p.inputs, powerBudget: p.powerBudget, selfPowered: p.selfPowered })); }}>Reset unlocks & options</button>
+            <button onClick={() => { if (confirm('Reset unlocks and options? Factories are kept.')) setS((p) => ({ ...DEFAULTS, outputs: p.outputs, inputs: p.inputs, powerBudget: p.powerBudget, selfPowered: p.selfPowered, overclock: p.overclock, shards: p.shards })); }}>Reset unlocks & options</button>
             <a className="kofi" href="https://ko-fi.com/mareklackowski" target="_blank" rel="noopener noreferrer">☕ Buy me a coffee</a>
           </div>
           <p className="legal">
@@ -503,6 +514,7 @@ function Summary({ plan, budget, selfPowered }: { plan: Plan; budget?: number; s
   const sources = plan.groups.filter((g) => g.kind === 'extract' || g.kind === 'input');
   const outs = plan.groups.filter((g) => g.kind === 'output' || g.kind === 'sink');
   const guide = plan.wirings.filter((w) => w.splitters || w.mergers);
+  const shards = plan.groups.reduce((a, g) => a + g.machines.reduce((x, m) => x + m.shards, 0), 0);
   return (
     <div className="summary">
       {plan.warnings.map((w) => <div key={w} className="warn">{w}</div>)}
@@ -511,11 +523,12 @@ function Summary({ plan, budget, selfPowered }: { plan: Plan; budget?: number; s
         {plan.generated > 0 && <div><b>+{fmt(plan.generated)}</b> MW generated</div>}
         <div><b>{machines.reduce((a, g) => a + g.machines.length, 0)}</b> production machines</div>
         <div><b>{plan.edges.length}</b> inter-group belts</div>
+        {shards > 0 && <div><b>{shards}</b> power shards</div>}
       </div>
       <div className="cols">
         <div>
           <h3>Inputs used</h3>
-          <List rows={sources.flatMap((g) => g.outputs.map((f) => [itemIcon(f.item), g.label, `${fmt(f.rate)}/min`] as [string, string, string]))} />
+          <List rows={sources.flatMap((g) => g.outputs.map((f) => [itemIcon(f.item), g.machines.length ? `${g.label} · ${g.machines.length}× at ${[...new Set(g.machines.map((m) => `${+(m.clock * 100).toFixed(1)}%`))].join(' / ')}` : g.label, `${fmt(f.rate)}/min`] as [string, string, string]))} />
           {plan.generated > 0 && (
             <>
               <h3>Power</h3>
