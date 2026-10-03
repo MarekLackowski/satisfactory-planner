@@ -2,7 +2,7 @@ import data from './data/game.json';
 
 export type Flow = { item: string; rate: number };
 export type Item = { id: string; name: string; fluid: boolean; raw: boolean; sink: number; color: number[] | null };
-export type Building = { id: string; name: string; power: number; variable?: boolean; exp: number };
+export type Building = { id: string; name: string; power: number; variable?: boolean; exp: number; generates?: number }; // generates: MW of a power plant
 export type Extractor = { id: string; name: string; power: number; exp: number; rate: number; resources: string[] };
 export type Conveyor = { id: string; name: string; mk: number; rate: number };
 export type Recipe = {

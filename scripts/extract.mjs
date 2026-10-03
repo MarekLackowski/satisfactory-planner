@@ -105,6 +105,35 @@ for (const r of byNative.FGRecipe) {
   });
 }
 
+// "alternate" = unlocked by a hard drive (a few MAM/milestone recipes also have Alternate in their class name)
+const hardDrive = new Set();
+for (const s of byNative.FGSchematic.filter((s) => s.mType === 'EST_Alternate'))
+  for (const u of s.mUnlocks ?? []) for (const m of (u.mRecipes ?? '').matchAll(/(\w+_C)'/g)) hardDrive.add(m[1]);
+for (const r of recipes) r.alt = hardDrive.has(r.id);
+
+// Nuclear Power Plant as a producer: burning fuel rods is the only source of Uranium/Plutonium Waste
+// (needed for every plutonium recipe). Its power is generated, so it consumes 0 and reports what it makes.
+for (const c of byNative.FGBuildableGeneratorNuclear ?? []) {
+  const mw = num(c.mPowerProduction);
+  buildings[c.ClassName] = { id: c.ClassName, name: c.mDisplayName, power: 0, exp: 1, generates: mw };
+  const fuelDescs = Object.fromEntries(all('FGItemDescriptorNuclearFuel').map((x) => [x.ClassName, x]));
+  for (const f of c.mFuel) {
+    const fuel = fuelDescs[f.mFuelClass];
+    if (!fuel || !items[f.mFuelClass]) continue;
+    const dur = num(fuel.mEnergyValue) / mw; // seconds per rod at full power
+    const waterPerMin = num(c.mSupplementalToPowerRatio) * mw * 60 / 1000; // m³/min
+    recipes.push({
+      id: `Gen_${c.ClassName}_${f.mFuelClass}`,
+      name: `${c.mDisplayName} (${items[f.mFuelClass].name})`,
+      alt: false,
+      building: c.ClassName,
+      duration: dur,
+      inputs: [{ item: f.mFuelClass, rate: 60 / dur }, { item: f.mSupplementalResourceClass, rate: waterPerMin }],
+      outputs: f.mByproduct ? [{ item: f.mByproduct, rate: (+f.mByproductAmount * 60) / dur }] : [],
+    });
+  }
+}
+
 // keep only items used by recipes (plus raw)
 const used = new Set([...resourceIds]);
 for (const r of recipes) for (const x of [...r.inputs, ...r.outputs]) used.add(x.item);

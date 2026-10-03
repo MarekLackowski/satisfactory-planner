@@ -492,6 +492,7 @@ function Summary({ plan, budget }: { plan: Plan; budget?: number }) {
       {plan.warnings.map((w) => <div key={w} className="warn">{w}</div>)}
       <div className="stats">
         <div><b>{fmt(plan.power)}</b>{budget ? <> / {fmt(budget)}</> : null} MW power{budget ? <meter min={0} max={budget} value={plan.power} high={budget * 0.95} optimum={budget * 0.5} /> : null}</div>
+        {plan.generated > 0 && <div><b>+{fmt(plan.generated)}</b> MW generated</div>}
         <div><b>{machines.reduce((a, g) => a + g.machines.length, 0)}</b> production machines</div>
         <div><b>{plan.edges.length}</b> inter-group belts</div>
       </div>

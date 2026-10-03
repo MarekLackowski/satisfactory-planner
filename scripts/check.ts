@@ -179,6 +179,16 @@ const near = (a: number, b: number, msg: string) => assert.ok(Math.abs(a - b) < 
   assert.ok(n <= 1, `${n} crossings inside groups`);
 }
 
+// 2j) plutonium needs Uranium Waste, which only a Nuclear Power Plant burning uranium rods makes
+for (const item of ['Desc_PlutoniumPellet_C', 'Desc_PlutoniumFuelRod_C', 'Desc_NonFissibleUranium_C']) {
+  const s: Settings = { ...base, outputs: [{ item, rate: 1, maximize: false }] };
+  const p = await solvePlan(s);
+  const plant = p.groups.find((g) => g.building === 'Build_GeneratorNuclear_C');
+  assert.ok(plant, `${item}: nuclear plant in the plan`);
+  assert.ok(p.generated > 0 && plant!.note?.startsWith('Generates'), 'reports generated power');
+  await assert.rejects(solvePlan({ ...s, buildings: s.buildings.filter((b) => b !== 'Build_GeneratorNuclear_C') }), /No feasible/);
+}
+
 // 3) infeasible: no buildings
 await assert.rejects(solve({ ...base, buildings: [], outputs: [{ item: 'Desc_IronPlate_C', rate: 10, maximize: false }] }));
 

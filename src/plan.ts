@@ -36,6 +36,7 @@ export type Plan = {
   buildingCount: Map<string, number>;
   warnings: string[];
   wirings: Wiring[]; // build recipe for every group port where belts branch, join or continue
+  generated: number; // MW made by power plants in the plan (not subtracted from power)
 };
 
 const EPS = 1e-6;
@@ -187,6 +188,7 @@ export function buildPlan(sol: Solution, s: Settings): Plan {
       inputs: r.inputs.map((f) => ({ item: f.item, rate: f.rate * x })),
       outputs: r.outputs.map((f) => ({ item: f.item, rate: f.rate * x })),
       power: machines.reduce((a, m) => a + base * m.clock ** b.exp, 0),
+      note: b.generates ? `Generates ${(machines.reduce((a, m) => a + m.clock, 0) * b.generates).toFixed(0)} MW` : undefined,
     };
     const scale = (l: Flow[], c: number) => l.map((f) => ({ item: f.item, rate: f.rate * c }));
     buildLines(g, (m) => ({ inputs: scale(r.inputs, m.clock), outputs: scale(r.outputs, m.clock) }), s);
@@ -288,7 +290,8 @@ export function buildPlan(sol: Solution, s: Settings): Plan {
   const power = groups.reduce((a, g) => a + g.power, 0);
   if (shardsLeft.n < 0) warnings.push('Not enough power shards.');
   if (s.powerBudget && power > s.powerBudget + 0.05) warnings.push(`Uses ${power.toFixed(1)} MW, over the ${s.powerBudget} MW budget (overclocking or the AWESOME Sink draw more than planned).`);
-  return { groups, edges, power, cost, buildingCount: count, warnings, wirings };
+  const generated = groups.reduce((a, g) => a + (g.building && buildings[g.building]?.generates ? g.machines.reduce((x, m) => x + m.clock, 0) * buildings[g.building].generates! : 0), 0);
+  return { groups, edges, power, cost, buildingCount: count, warnings, wirings, generated };
 }
 
 /**
