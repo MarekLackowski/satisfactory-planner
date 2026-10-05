@@ -32,6 +32,7 @@ export type Solution = {
   imports: Map<string, number>; // item -> /min taken from inputs
   surplus: Map<string, number>; // item -> /min left over (not a requested output)
   produced: Map<string, number>; // requested outputs -> /min
+  cost: number; // value of the minimized objective (weighted resources/power/buildings)
 };
 
 let highsP: ReturnType<typeof highsLoader> | undefined;
@@ -76,23 +77,28 @@ export const enabledRecipes = (s: Settings) => {
 const recipePower = (r: Recipe) => r.power ?? buildings[r.building].power;
 
 /**
- * solve, then drop recipes used in trace amounts (< 1% of one machine) and solve again: when several plans are
- * equally good the LP may sprinkle in a recipe at ~0.0005 machines, which in game is a whole idle building.
- * The cleaner plan is kept only if the outputs drop by at most 0.5%.
+ * solve, then simplify: when several plans are (nearly) equally good the LP may mix in a recipe at a fraction of
+ * a machine (e.g. 0.0005 Steeled Frame + 0.0002 Iron Pipe), which in game is whole idle buildings and extra belts.
+ * Recipes running under half a machine are tried without, smallest first; a simpler plan is kept if the outputs
+ * and the optimized cost stay within 0.5%.
  */
 export async function solveClean(s: Settings): Promise<Solution> {
   let sol = await solve(s);
   const total = (x: Solution) => [...x.produced.values()].reduce((a, b) => a + b, 0);
-  for (let i = 0; i < 3; i++) {
-    const tiny = [...sol.rates].filter(([, x]) => x < 0.01).map(([id]) => id);
-    if (!tiny.length) break;
+  const tried = new Set<string>();
+  for (let i = 0; i < 12; i++) {
+    const next = [...sol.rates].filter(([id, x]) => x < 0.5 && !tried.has(id)).sort((p, q) => p[1] - q[1])[0];
+    if (!next) break;
+    tried.add(next[0]);
     try {
-      const next = await solve({ ...s, exclude: [...(s.exclude ?? []), ...tiny] });
-      if (total(next) < total(sol) * 0.995) break;
-      sol = next;
-      s = { ...s, exclude: [...(s.exclude ?? []), ...tiny] };
+      const without = await solve({ ...s, exclude: [...(s.exclude ?? []), next[0]] });
+      const fine = total(without) >= total(sol) * 0.995 && without.cost <= sol.cost + Math.abs(sol.cost) * 0.005 + 1e-6;
+      if (fine) {
+        sol = without;
+        s = { ...s, exclude: [...(s.exclude ?? []), next[0]] };
+      }
     } catch {
-      break; // the trace recipe was actually needed
+      // that recipe is actually needed
     }
   }
   return sol;
@@ -194,7 +200,7 @@ export async function solve(s: Settings): Promise<Solution> {
   const res = run(lp(`Minimize\n obj: ${cost.join(' ')}`, extra));
   const col = (v: string) => res.Columns[v]?.Primal ?? 0;
 
-  const sol: Solution = { rates: new Map(), imports: new Map(), surplus: new Map(), produced: new Map() };
+  const sol: Solution = { rates: new Map(), imports: new Map(), surplus: new Map(), produced: new Map(), cost: res.ObjectiveValue };
   rs.forEach((r, i) => col(`r${i}`) > 1e-7 && sol.rates.set(r.id, col(`r${i}`)));
   const t = col('t');
   itemIds.forEach((id, k) => {
