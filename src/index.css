@@ -240,3 +240,8 @@ input:disabled { opacity: 0.45; cursor: not-allowed; }
 .delta.good { color: #3fa66a; }
 .delta.bad { color: #e5484d; }
 .raws { display: inline-flex; align-items: center; gap: 2px; } .raws img { width: 18px; height: 18px; } .raws .arrow { font-size: 8px; color: var(--muted); margin: 0 3px; }
+.votes { display: flex; flex-wrap: wrap; gap: 3px 8px; font-size: 11px; color: var(--muted); }
+.vote { display: inline-flex; align-items: center; gap: 3px; }
+.vote .tier-badge { width: 15px; height: 15px; font-size: 9px; border-radius: 3px; }
+.tier-key a { color: inherit; }
+.tier-key a + a::before { content: '· '; }

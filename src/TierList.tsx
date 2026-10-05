@@ -1,5 +1,5 @@
 import { useMemo, useState } from 'react';
-import { fmt, icon, itemIcon, nameOf, recipeById, TIERS, tierOf, type Flow, type Recipe, type TierInfo } from './game';
+import { fmt, icon, itemIcon, nameOf, recipeById, TIER_SOURCES, TIERS, tierOf, type Flow, type Recipe, type TierInfo } from './game';
 
 const TIER_ORDER = ['S', 'A', 'B', 'C', 'D', 'F', 'N'] as const;
 
@@ -57,8 +57,8 @@ export default function TierList({ alts, onBack }: Props) {
             <button key={k} className={show === k ? 'on' : ''} onClick={() => setShow(k)}>{k === 'all' ? 'All' : k === 'unlocked' ? '✓ Unlocked' : 'Locked'}</button>
           ))}
         </span>
-        <span className="tier-key" title="Each alternate vs the standard recipe for the same product, over the whole chain: raw resources (55%, rarer ores weigh more), power (25%), buildings (10%), fewer raw resources to mine (10%).">
-          <img src={itemIcon('Desc_OreIron_C')} alt="" /> resources · <img src={itemIcon('MW')} alt="" /> power · <img src={icon('Constructor')} alt="" /> buildings ⓘ
+        <span className="tier-key" title={`Tier = average of ${TIER_SOURCES.length} community tier lists (80%) + our whole-chain math (20%): raw resources, power, buildings and resources to mine vs the standard recipe. Hover a recipe for each list's verdict.`}>
+          {TIER_SOURCES.map((s) => <a key={s.id} href={s.url} target="_blank" rel="noopener noreferrer">{s.name}</a>)} + math ⓘ
         </span>
       </header>
       <div className="tier-rows">
@@ -82,6 +82,12 @@ export default function TierList({ alts, onBack }: Props) {
                         {Object.keys(t.raw).filter((k) => k !== 'Desc_Water_C').map((k) => <img key={k} src={itemIcon(k)} alt={nameOf(k)} title={nameOf(k)} />)}
                       </span>
                     )}
+                    <span className="votes">
+                      {TIER_SOURCES.filter((s) => t.community[s.id]).map((s) => (
+                        <span key={s.id} className="vote"><span className="tier-badge" style={{ background: TIERS[t.community[s.id]].color }}>{t.community[s.id]}</span>{s.name}</span>
+                      ))}
+                      {t.math !== 'N' && <span className="vote"><span className="tier-badge" style={{ background: TIERS[t.math].color }}>{t.math}</span>Math</span>}
+                    </span>
                     <span className="deltas">
                       <Delta ico={nameOf('Desc_OreIron_C')} v={t.resources} label="Resources" />
                       <Delta ico="Power Shard" v={t.power} label="Power" />

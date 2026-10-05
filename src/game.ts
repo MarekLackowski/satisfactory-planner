@@ -1,5 +1,6 @@
 import data from './data/game.json';
 import tierData from './data/tiers.json';
+import tierSources from './data/tier-sources.json';
 
 export type Flow = { item: string; rate: number };
 export type Item = { id: string; name: string; fluid: boolean; raw: boolean; sink: number; color: number[] | null; power?: boolean };
@@ -72,7 +73,10 @@ export type TierInfo = {
   buildings: number | null;
   raw: Record<string, number>; // raw resources per item with this recipe
   baseRaw: Record<string, number> | null; // … with the standard recipe
+  math: TierInfo['tier']; // our own whole-chain rating
+  community: Record<string, TierInfo['tier']>; // tier list id -> its tier
 };
+export const TIER_SOURCES = tierSources as { id: string; name: string; url: string }[];
 export const tierOf = (recipeId: string) => (tierData as Record<string, TierInfo>)[recipeId] as TierInfo | undefined;
 export const TIERS: Record<TierInfo['tier'], { color: string; meaning: string }> = {
   S: { color: '#ff6b6b', meaning: 'Much cheaper chain – get it' },

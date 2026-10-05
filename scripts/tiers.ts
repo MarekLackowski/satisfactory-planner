@@ -83,6 +83,21 @@ const product = (r: Recipe) =>
   (r.outputs.find((o) => o.item !== WATER) ?? r.outputs[0]).item;
 
 const TIERS = [['S', 0.45], ['A', 0.2], ['B', 0.05], ['C', -0.05], ['D', -0.25], ['F', -Infinity]] as const;
+
+// ---- community tier lists (scripts/community-tiers.json): the final tier leans on them, math fills the gaps
+type Source = { id: string; name: string; url: string; tiers: Record<string, string[]> };
+const community = JSON.parse(fs.readFileSync('scripts/community-tiers.json', 'utf8')).sources as Source[];
+const VALUE: Record<string, number> = { S: 5, A: 4, B: 3, C: 2, D: 1, F: 0 };
+const norm = (n: string) =>
+  n.toLowerCase().replace(/^alternate:\s*/, '').replace(/aluminium/g, 'aluminum').replace(/[^a-z0-9]+/g, ' ').trim().replace(/s$/, ''); // "Steel Screws" = "Steel Screw"
+// a list without an F tier puts its worst recipes in D: count that like D/F
+const lowest = (s: Source) => (s.tiers.F ? 'F' : 'D');
+const opinions = new Map<string, Record<string, string>>(); // normalized name -> source id -> tier
+for (const s of community)
+  for (const [tier, names] of Object.entries(s.tiers))
+    for (const n of names) (opinions.get(norm(n)) ?? opinions.set(norm(n), {}).get(norm(n))!)[s.id] = tier;
+const value = (s: Source, tier: string) => (tier === lowest(s) && tier === 'D' ? 0.5 : VALUE[tier]);
+const blendTier = (v: number) => (v >= 4.5 ? 'S' : v >= 3.5 ? 'A' : v >= 2.5 ? 'B' : v >= 1.5 ? 'C' : v >= 0.75 ? 'D' : 'F');
 const out: Record<string, unknown> = {};
 const standardMade = new Set(standard.flatMap((r) => r.outputs.map((o) => o.item)));
 const unlockOnly = recipes.filter((r) => r.alt && usable(r) && !standardMade.has(product(r)));
@@ -105,8 +120,22 @@ for (const alt of recipes.filter((r) => r.alt && usable(r))) {
   const score = b ? W[0] * ratio(b.res, a.res) + W[1] * ratio(b.power, a.power) + W[2] * ratio(b.machines, a.machines) + W[3] * simple : 0;
   const pct = (x: number, y: number) => Math.round((x / y - 1) * 100); // alt vs standard: -30 = 30% less
   out[alt.id] = {
-    tier: b ? TIERS.find(([, t]) => score >= t)![0] : 'N', // N: no standard recipe makes it – unlocks something new
-    score: +score.toFixed(3),
+    ...(() => {
+      const math = b ? TIERS.find(([, t]) => score >= t)![0] : 'N';
+      const ops = opinions.get(norm(alt.name)) ?? {};
+      const vals = community.filter((s) => ops[s.id]).map((s) => value(s, ops[s.id]));
+      const avg = vals.length ? vals.reduce((x, y) => x + y, 0) / vals.length : null;
+      // community 80% (60% with a single list), our math the rest; no list: math only; N stays N
+      const m = math === 'N' ? null : VALUE[math];
+      const final = avg === null ? m : m === null ? avg : vals.length >= 2 ? 0.8 * avg + 0.2 * m : 0.6 * avg + 0.4 * m;
+      return {
+        tier: final === null ? 'N' : blendTier(final),
+        score: +(final ?? 2.5).toFixed(3),
+        math, // our own rating
+        community: ops, // source id -> tier
+        mathScore: +score.toFixed(3),
+      };
+    })(),
     item,
     resources: b ? pct(a.res, b.res) : null,
     power: b ? pct(a.power, b.power) : null,
@@ -118,6 +147,9 @@ for (const alt of recipes.filter((r) => r.alt && usable(r))) {
   };
 }
 fs.writeFileSync('src/data/tiers.json', JSON.stringify(out));
+fs.writeFileSync('src/data/tier-sources.json', JSON.stringify(community.map(({ id, name, url }) => ({ id, name, url }))));
+const unmatched = [...opinions.keys()].filter((n) => !recipes.some((r) => r.alt && norm(r.name) === n));
+if (unmatched.length) console.log('community names not matched:', unmatched);
 const list = Object.entries(out) as [string, { tier: string; score: number }][];
 console.log(list.length, 'alternates rated:', Object.fromEntries([...TIERS.map(([t]) => t), 'N'].map((t) => [t, list.filter(([, v]) => v.tier === t).length])));
 for (const [id, v] of list.sort((x, y) => y[1].score - x[1].score)) console.log(v.tier, v.score.toFixed(2).padStart(6), recipes.find((r) => r.id === id)!.name);

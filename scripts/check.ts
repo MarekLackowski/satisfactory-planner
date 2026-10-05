@@ -286,5 +286,6 @@ await assert.rejects(solve({ ...base, outputs: [{ item: 'Desc_IronPlate_C', rate
 }
 // every alternate is on the tier list (re-run `npm run tiers` after `npm run data`)
 for (const r of recipes.filter((x) => x.alt)) assert.ok(tierOf(r.id), `${r.name} has no tier`);
-assert.equal(tierOf('Recipe_Alternate_PureIronIngot_C')!.tier, 'A');
+assert.equal(tierOf('Recipe_Alternate_SteelRod_C')!.tier, 'A'); // community: A, A, A, S
+assert.equal(tierOf('Recipe_Alternate_ModularFrameHeavy_C')!.tier, 'S');
 console.log('all checks passed');
