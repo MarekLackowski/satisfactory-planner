@@ -1,6 +1,6 @@
 // Self-check of solver + plan. Run: npx tsx scripts/check.ts
 import assert from 'node:assert/strict';
-import { buildings, extractors, recipes } from '../src/game';
+import { buildings, extractors, recipes, tierOf } from '../src/game';
 import { layout } from '../src/layout';
 import { buildPlan, conveyorFor, solvePlan } from '../src/plan';
 import { buildSim, step } from '../src/sim';
@@ -269,4 +269,7 @@ await assert.rejects(solve({ ...base, outputs: [{ item: 'Desc_IronPlate_C', rate
   }
   console.log('HMF with all alts:', p.groups.length, 'groups,', p.power.toFixed(0), 'MW');
 }
+// every alternate is on the tier list (re-run `npm run tiers` after `npm run data`)
+for (const r of recipes.filter((x) => x.alt)) assert.ok(tierOf(r.id), `${r.name} has no tier`);
+assert.equal(tierOf('Recipe_Alternate_PureIronIngot_C')!.tier, 'A');
 console.log('all checks passed');

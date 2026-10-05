@@ -2,6 +2,7 @@ import { useEffect, useMemo, useState } from 'react';
 import FactoriesPanel from './Factories';
 import { loadFactories, newFactory, saveFactories, type Factories, type Factory } from './storage';
 import FactoryCanvas from './FactoryCanvas';
+import TierList, { TierBadge } from './TierList';
 import WiringDiagram from './WiringDiagram';
 import {
   POWER, unit, TIER_COLORS, type ColorBy, belts, buildings, extractors, fmt, icon, itemIcon, items, nameOf, pipes, producible, rawItems, recipes, WATER_PUMP, type Purity,
@@ -114,7 +115,7 @@ export default function App() {
   });
   const [s, setS] = useState<Settings>(init.s);
   const set = (patch: Partial<Settings>) => setS((p) => ({ ...p, ...patch }));
-  const [tab, setTab] = useState<'factories' | 'production' | 'unlocks'>('production');
+  const [tab, setTab] = useState<'factories' | 'production' | 'unlocks' | 'tiers'>('production');
   const [fac, setFac] = useState<Factories>(init.f);
   const [naming, setNaming] = useState('');
   const active = fac.list.find((x) => x.id === fac.active); // undefined once every factory is deleted
@@ -226,11 +227,28 @@ export default function App() {
           <nav>
             <button className={view === 'factories' ? 'on' : ''} onClick={() => setTab('factories')}>Factories</button>
             <button className={view === 'production' ? 'on' : ''} disabled={!active} onClick={() => setTab('production')}>Production</button>
+            <button className={view === 'tiers' ? 'on' : ''} onClick={() => setTab('tiers')}>Tier list</button>
             <button className={view === 'unlocks' ? 'on' : ''} onClick={() => setTab('unlocks')}>Unlocks</button>
           </nav>
         </header>
 
-        {view === 'factories' ? (
+        {view === 'tiers' ? (
+          <div className="panel">
+            <section>
+              <h2>How recipes are rated</h2>
+              <p className="hint tier-help">
+                For every alternate recipe the solver builds the cheapest whole production chain for 1 item of its product twice: once with standard recipes only, once making it with this alternate (everything upstream stays standard).
+              </p>
+              <ul className="hint tier-help">
+                <li><b>Resources (60%)</b>: raw ore, oil, gas… per item, rarer resources weigh more; hand-gathered items and power slugs are expensive because they can't be automated.</li>
+                <li><b>Power (25%)</b>: machines plus mining/extraction.</li>
+                <li><b>Buildings (15%)</b>: machines in the chain.</li>
+              </ul>
+              <p className="hint tier-help">Each is compared as a ratio to the standard chain; S means a much cheaper chain, F costs more. <b>New</b> recipes make something no standard recipe can. Byproducts get no credit.</p>
+              <p className="hint tier-help">Tick a recipe to mark it unlocked – the same list as in Unlocks, used by the planner.</p>
+            </section>
+          </div>
+        ) : view === 'factories' ? (
           <FactoriesPanel f={current} naming={naming} onStart={() => setTab('production')} onRename={patchActive} onOpen={(id) => open(current.list.find((x) => x.id === id)!)}
             onNew={() => addFactory(newFactory(`Factory ${fac.list.length + 1}`, { dir }))}
             onDuplicate={(id) => {
@@ -429,6 +447,7 @@ export default function App() {
                 {alts.map((r) => (
                   <label key={r.id} className="alt">
                     <input type="checkbox" checked={s.alts.includes(r.id)} onChange={(e) => set({ alts: toggle(s.alts, r.id, e.target.checked) })} />
+                    <TierBadge id={r.id} size={20} />
                     <Icon src={itemIcon(r.outputs[0].item)} />
                     <span>
                       <b>{r.name}</b>
@@ -456,7 +475,9 @@ export default function App() {
       </aside>
 
       <main>
-        {!active ? (
+        {view === 'tiers' ? (
+          <TierList alts={s.alts} onToggle={(id, on) => set({ alts: toggle(s.alts, id, on) })} />
+        ) : !active ? (
           <div className="empty">
             <img src={icon('Constructor')} width={96} height={96} alt="" />
             <h2>No factories yet</h2>

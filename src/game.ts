@@ -1,4 +1,5 @@
 import data from './data/game.json';
+import tierData from './data/tiers.json';
 
 export type Flow = { item: string; rate: number };
 export type Item = { id: string; name: string; fluid: boolean; raw: boolean; sink: number; color: number[] | null; power?: boolean };
@@ -60,3 +61,23 @@ export const fmt = (n: number, d = 2) => (Math.abs(n) >= 100 ? n.toFixed(1) : n.
 /** belt/pipe tier colours (pipes Mk.1/2 reuse the first two) – distinct from the load colours */
 export const TIER_COLORS = ['#a3a8b3', '#2fb8c7', '#3b82f6', '#8b5cf6', '#e046c8', '#f2f2f2'];
 export type ColorBy = 'load' | 'tier';
+
+// ---- alternate recipe tier list (computed by scripts/tiers.ts from the whole production chain)
+export type TierInfo = {
+  tier: 'S' | 'A' | 'B' | 'C' | 'D' | 'F' | 'N';
+  score: number;
+  item: string; // the product it is rated for
+  resources: number | null; // % change vs the standard recipe's chain (negative = needs less)
+  power: number | null;
+  buildings: number | null;
+};
+export const tierOf = (recipeId: string) => (tierData as Record<string, TierInfo>)[recipeId] as TierInfo | undefined;
+export const TIERS: Record<TierInfo['tier'], { color: string; meaning: string }> = {
+  S: { color: '#ff6b6b', meaning: 'Much cheaper chain – get it' },
+  A: { color: '#ff9f43', meaning: 'Clearly better than standard' },
+  B: { color: '#feca57', meaning: 'Somewhat better' },
+  C: { color: '#d4d96a', meaning: 'About the same – situational' },
+  D: { color: '#7ed6a5', meaning: 'Somewhat worse, useful for specific resources' },
+  F: { color: '#74b9ff', meaning: 'Costs more than standard' },
+  N: { color: '#b8a9e8', meaning: 'Makes something no standard recipe can' },
+};
