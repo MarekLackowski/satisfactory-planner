@@ -24,6 +24,7 @@ export type Settings = {
   powerBudget?: number; // MW the whole factory may draw from the grid (0/undefined = no limit)
   selfPowered?: boolean; // build power plants in this factory for its own consumption
   extraPower?: number; // internal: MW drawn by things outside the LP (sink), added when self-powered
+  exclude?: string[]; // internal: recipe ids left out (trace amounts dropped by solveClean)
 };
 
 export type Solution = {
@@ -68,10 +69,34 @@ export function availability(s: Settings) {
 export const enabledRecipes = (s: Settings) => {
   const on = new Set(s.buildings);
   const alts = new Set(s.alts);
-  return recipes.filter((r) => on.has(r.building) && (!r.alt || alts.has(r.id)));
+  const out = new Set(s.exclude ?? []);
+  return recipes.filter((r) => on.has(r.building) && (!r.alt || alts.has(r.id)) && !out.has(r.id));
 };
 
 const recipePower = (r: Recipe) => r.power ?? buildings[r.building].power;
+
+/**
+ * solve, then drop recipes used in trace amounts (< 1% of one machine) and solve again: when several plans are
+ * equally good the LP may sprinkle in a recipe at ~0.0005 machines, which in game is a whole idle building.
+ * The cleaner plan is kept only if the outputs drop by at most 0.5%.
+ */
+export async function solveClean(s: Settings): Promise<Solution> {
+  let sol = await solve(s);
+  const total = (x: Solution) => [...x.produced.values()].reduce((a, b) => a + b, 0);
+  for (let i = 0; i < 3; i++) {
+    const tiny = [...sol.rates].filter(([, x]) => x < 0.01).map(([id]) => id);
+    if (!tiny.length) break;
+    try {
+      const next = await solve({ ...s, exclude: [...(s.exclude ?? []), ...tiny] });
+      if (total(next) < total(sol) * 0.995) break;
+      sol = next;
+      s = { ...s, exclude: [...(s.exclude ?? []), ...tiny] };
+    } catch {
+      break; // the trace recipe was actually needed
+    }
+  }
+  return sol;
+}
 
 /** Linear program over recipe machine counts; maximize outputs scale `t` first (if any), then minimize weighted cost. */
 export async function solve(s: Settings): Promise<Solution> {

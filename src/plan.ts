@@ -2,7 +2,7 @@ import {
   belts, buildings, costs, extractors, items, JUNCTION, MERGER, nameOf, pipes, POWER, recipeById, SPLITTER, WATER, WATER_PUMP,
   type Conveyor, type Flow,
 } from './game';
-import { minerCap, solve, type Settings, type Solution } from './solver';
+import { minerCap, solveClean as solve, type Settings, type Solution } from './solver';
 import { describe, wire, type End, type Wiring } from './wiring';
 
 export type Machine = { clock: number; shards: number };

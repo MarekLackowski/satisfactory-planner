@@ -231,6 +231,21 @@ for (const item of ['Desc_PlutoniumPellet_C', 'Desc_PlutoniumFuelRod_C', 'Desc_N
   }
 }
 
+// 2l) equally good plans: no recipe sprinkled in at trace amounts (user's rotor + modular frame with Iron Pipe unlocked)
+{
+  const alt = (n: string) => recipes.find((r) => r.alt && r.name === n)!.id;
+  const s: Settings = {
+    ...base, unlimitedRaw: false, beltMk: [1, 2], cheapBelts: true,
+    alts: ['Cast Screws', 'Iron Wire', 'Stitched Iron Plate', 'Steeled Frame', 'Iron Pipe'].map(alt),
+    buildings: ['Build_ConstructorMk1_C', 'Build_SmelterMk1_C', 'Build_AssemblerMk1_C', 'Build_MinerMk1_C'],
+    outputs: [{ item: 'Desc_Rotor_C', rate: 1, maximize: true }, { item: 'Desc_ModularFrame_C', rate: 1, maximize: true }],
+    inputs: [{ kind: 'miner', extractor: 'Build_MinerMk1_C', item: 'Desc_OreIron_C', purity: 'normal', count: 2, clock: 1 }],
+  };
+  const p = await solvePlan(s);
+  for (const g of p.groups.filter((x) => x.kind === 'recipe')) assert.ok(g.machines.reduce((a, m) => a + m.clock, 0) > 0.01, `${g.label} only at trace amounts`);
+  assert.equal(p.groups.filter((x) => x.kind === 'recipe').reduce((a, g) => a + g.machines.length, 0), 17);
+}
+
 // 3) infeasible: no buildings
 await assert.rejects(solve({ ...base, buildings: [], outputs: [{ item: 'Desc_IronPlate_C', rate: 10, maximize: false }] }));
 
