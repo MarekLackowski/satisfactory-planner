@@ -239,3 +239,4 @@ input:disabled { opacity: 0.45; cursor: not-allowed; }
 .delta img { width: 14px; height: 14px; }
 .delta.good { color: #3fa66a; }
 .delta.bad { color: #e5484d; }
+.raws { display: inline-flex; align-items: center; gap: 2px; } .raws img { width: 18px; height: 18px; } .raws .arrow { font-size: 8px; color: var(--muted); margin: 0 3px; }

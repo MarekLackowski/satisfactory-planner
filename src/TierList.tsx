@@ -57,7 +57,7 @@ export default function TierList({ alts, onBack }: Props) {
             <button key={k} className={show === k ? 'on' : ''} onClick={() => setShow(k)}>{k === 'all' ? 'All' : k === 'unlocked' ? '✓ Unlocked' : 'Locked'}</button>
           ))}
         </span>
-        <span className="tier-key" title="Each alternate vs the standard recipe for the same product, over the whole chain: raw resources (60%, rarer ores weigh more), power (25%), buildings (15%).">
+        <span className="tier-key" title="Each alternate vs the standard recipe for the same product, over the whole chain: raw resources (55%, rarer ores weigh more), power (25%), buildings (10%), fewer raw resources to mine (10%).">
           <img src={itemIcon('Desc_OreIron_C')} alt="" /> resources · <img src={itemIcon('MW')} alt="" /> power · <img src={icon('Constructor')} alt="" /> buildings ⓘ
         </span>
       </header>
@@ -75,6 +75,13 @@ export default function TierList({ alts, onBack }: Props) {
                   <div className="pop">
                     <b>{r.name}</b>
                     <span className="pop-building"><img src={icon(nameOf(r.building))} alt="" /> {nameOf(r.building)}</span>
+                    {t.baseRaw && (
+                      <span className="raws" title="Raw resources to mine: standard → this recipe">
+                        {Object.keys(t.baseRaw).filter((k) => k !== 'Desc_Water_C').map((k) => <img key={k} src={itemIcon(k)} alt={nameOf(k)} title={nameOf(k)} />)}
+                        <span className="arrow">▶</span>
+                        {Object.keys(t.raw).filter((k) => k !== 'Desc_Water_C').map((k) => <img key={k} src={itemIcon(k)} alt={nameOf(k)} title={nameOf(k)} />)}
+                      </span>
+                    )}
                     <span className="deltas">
                       <Delta ico={nameOf('Desc_OreIron_C')} v={t.resources} label="Resources" />
                       <Delta ico="Power Shard" v={t.power} label="Power" />

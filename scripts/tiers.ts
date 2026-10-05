@@ -1,7 +1,8 @@
 // Rates every alternate recipe S..F against the standard recipe for the same product, over the whole chain.
 // For each alternate: cheapest chain for 1/min of its product using only standard recipes, vs the cheapest
 // chain that must make the product with this alternate (everything upstream still standard).
-// Compared: raw resources weighted by world scarcity (60%), power incl. extraction (25%), buildings (15%).
+// Compared: raw resources weighted by world scarcity (55%), power incl. extraction (25%), buildings (10%),
+// simplicity (10%): how many different raw resources the chain has to mine.
 // Run: npx tsx scripts/tiers.ts  -> src/data/tiers.json
 import fs from 'node:fs';
 import highsLoader from 'highs';
@@ -22,7 +23,7 @@ const weight = (id: string) =>
 const standard = recipes.filter((r) => !r.alt && usable(r));
 
 const h = await highsLoader();
-type Cost = { res: number; power: number; machines: number; raw: Record<string, number> };
+type Cost = { res: number; power: number; machines: number; raw: Record<string, number>; rawTypes: number; steps: number };
 
 function cheapest(target: string, pool: Recipe[], force?: Recipe): Cost | null {
   const rows = new Map<string, string[]>();
@@ -65,11 +66,15 @@ function cheapest(target: string, pool: Recipe[], force?: Recipe): Cost | null {
     }
   });
   let machines = 0;
+  let steps = 0;
   pool.forEach((rec, i) => {
     machines += col(`r${i}`);
     pw += power(rec) * col(`r${i}`);
+    if (col(`r${i}`) > 1e-6) steps++;
   });
-  return { res: r, power: pw, machines, raw };
+  // simplicity: how many different things must be mined (water is everywhere) and how many recipe steps
+  const rawTypes = Object.keys(raw).filter((id) => id !== WATER).length;
+  return { res: r, power: pw, machines, raw, rawTypes, steps };
 }
 
 /** the product an alternate is "for": the output named like the recipe, else the first that isn't water */
@@ -93,7 +98,11 @@ for (const alt of recipes.filter((r) => r.alt && usable(r))) {
     continue;
   }
   const ratio = (x: number, y: number) => Math.log2(Math.max(x, 1e-9) / Math.max(y, 1e-9));
-  const score = b ? 0.6 * ratio(b.res, a.res) + 0.25 * ratio(b.power, a.power) + 0.15 * ratio(b.machines, a.machines) : 0;
+  // weights: resources, power, buildings, simplicity, share of "raw types" (vs production steps) in simplicity.
+  // Tuned against a community tier list: more weight on simplicity (or counting steps) lowered the agreement.
+  const W = (process.env.W ?? '0.55,0.25,0.1,0.1,1').split(',').map(Number);
+  const simple = b ? W[4] * ratio(b.rawTypes, a.rawTypes) + (1 - W[4]) * ratio(b.steps, a.steps) : 0;
+  const score = b ? W[0] * ratio(b.res, a.res) + W[1] * ratio(b.power, a.power) + W[2] * ratio(b.machines, a.machines) + W[3] * simple : 0;
   const pct = (x: number, y: number) => Math.round((x / y - 1) * 100); // alt vs standard: -30 = 30% less
   out[alt.id] = {
     tier: b ? TIERS.find(([, t]) => score >= t)![0] : 'N', // N: no standard recipe makes it – unlocks something new
@@ -102,6 +111,8 @@ for (const alt of recipes.filter((r) => r.alt && usable(r))) {
     resources: b ? pct(a.res, b.res) : null,
     power: b ? pct(a.power, b.power) : null,
     buildings: b ? pct(a.machines, b.machines) : null,
+    rawTypes: [b?.rawTypes ?? null, a.rawTypes], // standard -> alternate
+    steps: [b?.steps ?? null, a.steps],
     raw: Object.fromEntries(Object.entries(a.raw).map(([k, v]) => [k, +v.toFixed(3)])),
     baseRaw: b ? Object.fromEntries(Object.entries(b.raw).map(([k, v]) => [k, +v.toFixed(3)])) : null,
   };

@@ -70,6 +70,8 @@ export type TierInfo = {
   resources: number | null; // % change vs the standard recipe's chain (negative = needs less)
   power: number | null;
   buildings: number | null;
+  raw: Record<string, number>; // raw resources per item with this recipe
+  baseRaw: Record<string, number> | null; // … with the standard recipe
 };
 export const tierOf = (recipeId: string) => (tierData as Record<string, TierInfo>)[recipeId] as TierInfo | undefined;
 export const TIERS: Record<TierInfo['tier'], { color: string; meaning: string }> = {
