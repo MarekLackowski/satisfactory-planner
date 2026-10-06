@@ -11,10 +11,13 @@ const TOP = 26;
 
 const trunc = (s: string, n: number) => (s.length > n ? `${s.slice(0, n - 1)}…` : s);
 type Rect = { x: number; y: number; w: number; h: number };
+type P = [number, number];
 const hit = (a: Rect, b: Rect) => a.x < b.x + b.w && a.x + a.w > b.x && a.y < b.y + b.h && a.y + a.h > b.y;
 
-/** build recipe as a picture: incoming belts (left) → splitters → mergers → outgoing belts (right) */
+/** build recipe as a picture: incoming belts/pipes (left) → splitters/manifolds → mergers → where they go (right) */
 export default function WiringDiagram({ w }: { w: Wiring }) {
+  const fluid = w.fluid;
+  const per = fluid ? 'm³/min' : '/min';
   const used = w.sources.map((_, i) => w.pieces.filter((p) => p.from === i));
   const srcRows = w.sources.map((s, i) => ({ s, i })).filter(({ i }) => used[i].length);
   const srcPos = new Map(srcRows.map(({ i }, k) => [i, k]));
@@ -33,6 +36,8 @@ export default function WiringDiagram({ w }: { w: Wiring }) {
   const yOf = (k: number, n: number) => TOP + ((rows - n) * ROW) / 2 + k * ROW + ROW / 2;
   const ySrc = new Map(srcRows.map(({ i }, k) => [i, yOf(k, srcRows.length)]));
   const yDst = new Map(dstRows.map((r, k) => [`${r.j}#${r.lane}`, yOf(k, dstRows.length)]));
+  const yOfPiece = (p: { to: number; lane: number }) => yDst.get(`${p.to}#${p.lane}`)!;
+  const merges = (p: { to: number; lane: number }) => w.pieces.filter((q) => q.to === p.to && q.lane === p.lane).length > 1;
 
   // three layers: belts below, boxes and blocks above them, labels on top (placed so they don't collide)
   const belts: React.ReactNode[] = [];
@@ -59,95 +64,120 @@ export default function WiringDiagram({ w }: { w: Wiring }) {
         <text x={cx} y={cy + 3} fontSize={10} fontWeight={600} textAnchor="middle" fill={color}>{text}</text>
       </g>,
     );
-    return wd;
   };
+  // splitter / merger, or a pipeline junction for fluids
   const block = (x: number, y: number, kind: 'splitter' | 'merger', key: string, badge?: string) => {
     taken.push({ x: x - 14, y: y - 14, w: 28, h: 28 });
+    const ico = fluid ? 'Pipeline Junction' : kind === 'splitter' ? 'Conveyor Splitter' : 'Conveyor Merger';
     nodes.push(
       <g key={key}>
-        <rect x={x - 13} y={y - 13} width={26} height={26} rx={5} fill="var(--machine)" stroke={kind === 'splitter' ? 'var(--accent)' : 'var(--under)'} strokeWidth={1.5} />
-        <image href={icon(kind === 'splitter' ? 'Conveyor Splitter' : 'Conveyor Merger')} x={x - 10} y={y - 10} width={20} height={20} />
+        <rect x={x - 13} y={y - 13} width={26} height={26} rx={5} fill="var(--machine)" stroke={fluid ? 'var(--pipe)' : kind === 'splitter' ? 'var(--accent)' : 'var(--under)'} strokeWidth={1.5} />
+        <image href={icon(ico)} x={x - 10} y={y - 10} width={20} height={20} />
       </g>,
     );
     if (badge) {
-      // the split ratio sits under the block (or above it when the next row is right below)
       const below = { x: x - 32, y: y + 15, w: 64, h: 15 };
       const above = { x: x - 32, y: y - 30, w: 64, h: 15 };
       const r = taken.some((t) => hit(t, below)) ? above : below;
       taken.push(r);
-      pill(x, r.y + 8, badge, `${key}b`, badge === 'uneven' ? 'var(--muted)' : 'var(--accent)');
+      pill(x, r.y + 8, badge, `${key}b`, badge === 'uneven' || badge === 'manifold' ? 'var(--muted)' : 'var(--accent)');
     }
   };
-  const curve = (x1: number, y1: number, x2: number, y2: number) => {
+  /** a belt or pipe: smooth curve between two points, or a straight polyline; at(t) gives a point along it */
+  const draw = (pts: P[], key: string) => {
+    const smooth = pts.length === 2;
+    const [x1, y1] = pts[0];
+    const [x2, y2] = pts[pts.length - 1];
     const mx = (x1 + x2) / 2;
-    return { d: `M${x1},${y1} C${mx},${y1} ${mx},${y2} ${x2},${y2}`, at: (t: number) => {
-      const bz = (a: number, b: number, c: number, d: number) => (1 - t) ** 3 * a + 3 * (1 - t) ** 2 * t * b + 3 * (1 - t) * t ** 2 * c + t ** 3 * d;
-      return { x: bz(x1, mx, mx, x2), y: bz(y1, y1, y2, y2) };
-    } };
-  };
-  const belt = (x1: number, y1: number, x2: number, y2: number, key: string) => {
-    const c = curve(x1, y1, x2, y2);
+    const d = smooth ? `M${x1},${y1} C${mx},${y1} ${mx},${y2} ${x2},${y2}` : `M${pts.map((p) => p.join(',')).join(' L')}`;
     belts.push(
       <g key={key}>
-        <path d={c.d} fill="none" stroke="var(--belt-edge)" strokeWidth={6} />
-        <path d={c.d} fill="none" stroke="var(--belt)" strokeWidth={4} />
+        <path d={d} fill="none" stroke="var(--belt-edge)" strokeWidth={fluid ? 7 : 6} />
+        <path d={d} fill="none" stroke={fluid ? 'var(--pipe)' : 'var(--belt)'} strokeWidth={fluid ? 5 : 4} />
       </g>,
     );
-    return c;
+    return (t: number): { x: number; y: number } => {
+      if (smooth) {
+        const bz = (a: number, b: number, c: number, e: number) => (1 - t) ** 3 * a + 3 * (1 - t) ** 2 * t * b + 3 * (1 - t) * t ** 2 * c + t ** 3 * e;
+        return { x: bz(x1, mx, mx, x2), y: bz(y1, y1, y2, y2) };
+      }
+      // along the last (horizontal) leg, where the label reads best
+      const [a, b] = [pts[pts.length - 2], pts[pts.length - 1]];
+      return { x: a[0] + (b[0] - a[0]) * t, y: a[1] + (b[1] - a[1]) * t };
+    };
+  };
+  const label = (at: (t: number) => { x: number; y: number }, rate: number, prefer: number[], key: string) => {
+    const text = `${fmt(rate)}${per}`;
+    const wd = text.length * 5.8 + 8;
+    const spots = [...prefer, 0.1, 0.9].map(at).map((q) => ({ x: q.x - wd / 2, y: q.y - 8, w: wd, h: 15 }));
+    const r = spots.find((s) => !taken.some((t) => hit(t, s))) ?? spots[0];
+    taken.push(r);
+    pill(r.x + wd / 2, r.y + 8, text, key);
   };
 
-  for (const { s, i } of srcRows) {
-    const y = ySrc.get(i)!;
-    box(0, y, s.icon, s.label, `${fmt(s.rate)}/min`, `s${i}`);
-  }
+  for (const { s, i } of srcRows) box(0, ySrc.get(i)!, s.icon, s.label, `${fmt(s.rate)}${per}`, `s${i}`);
   for (const r of dstRows) {
-    const y = yDst.get(`${r.j}#${r.lane}`)!;
-    box(DST_X, y, r.d.icon, r.d.label, `${r.d.lanes > 1 ? `belt ${r.lane + 1}/${r.d.lanes} · ` : ''}${fmt(r.ins.reduce((a, p) => a + p.rate, 0))}/min`, `d${r.j}-${r.lane}`);
-  }
-  for (const { i } of srcRows) {
-    const ps = used[i];
-    if (ps.length < 2) continue;
-    const y = ySrc.get(i)!;
-    const kind = splitKind(ps.map((p) => p.rate));
-    belt(BOX, y, SPLIT_X - 13, y, `sb${i}`);
-    block(SPLIT_X, y, 'splitter', `sp${i}`, kind === 'even' ? `${ps.map(() => 1).join(':')} split` : kind === '2:1' ? '2:1 split *' : 'uneven');
+    box(DST_X, yDst.get(`${r.j}#${r.lane}`)!, r.d.icon, r.d.label,
+      `${r.d.lanes > 1 ? `${fluid ? 'pipe' : 'belt'} ${r.lane + 1}/${r.d.lanes} · ` : ''}${fmt(r.ins.reduce((a, p) => a + p.rate, 0))}${per}`, `d${r.j}-${r.lane}`);
   }
   for (const r of dstRows) {
     if (r.ins.length < 2) continue;
     const y = yDst.get(`${r.j}#${r.lane}`)!;
     block(MERGE_X, y, 'merger', `m${r.j}-${r.lane}`);
-    belt(MERGE_X + 13, y, DST_X, y, `mb${r.j}-${r.lane}`);
+    draw([[MERGE_X + 13, y], [DST_X, y]], `mb${r.j}-${r.lane}`);
   }
-  // pieces: draw every belt first, then label each where it is free (prefer the end without a block)
-  const placed = w.pieces.map((p, k) => {
-    const split = used[p.from].length > 1;
-    const merge = w.pieces.filter((q) => q.to === p.to && q.lane === p.lane).length > 1;
-    const c = belt(split ? SPLIT_X + 13 : BOX, ySrc.get(p.from)!, merge ? MERGE_X - 13 : DST_X, yDst.get(`${p.to}#${p.lane}`)!, `p${k}`);
-    return { p, k, c, prefer: !merge ? [0.86, 0.72, 0.6, 0.45] : !split ? [0.16, 0.3, 0.45, 0.6] : [0.5, 0.65, 0.35, 0.78, 0.22] };
+  const kinds: string[] = [];
+  srcRows.forEach(({ i }) => {
+    const ps = used[i];
+    const y = ySrc.get(i)!;
+    const end = (p: (typeof ps)[number]) => (merges(p) ? MERGE_X - 13 : DST_X);
+    if (ps.length === 1) {
+      const p = ps[0];
+      label(draw([[BOX, y], [end(p), yOfPiece(p)]], `p${i}`), p.rate, merges(p) ? [0.16, 0.3, 0.45] : [0.86, 0.72, 0.6], `l${i}`);
+      return;
+    }
+    const kind = fluid ? (ps.length > 3 ? 'manifold' : 'even') : splitKind(ps.map((p) => p.rate));
+    kinds.push(kind);
+    if (kind !== 'manifold') {
+      draw([[BOX, y], [SPLIT_X - 13, y]], `sb${i}`);
+      block(SPLIT_X, y, 'splitter', `sp${i}`, fluid ? undefined : kind === 'even' ? `${ps.map(() => 1).join(':')} split` : kind === '2:1' ? '2:1 split *' : 'uneven');
+      ps.forEach((p, k) => label(draw([[SPLIT_X + 13, y], [end(p), yOfPiece(p)]], `p${i}-${k}`), p.rate, merges(p) ? [0.5, 0.65, 0.35] : [0.86, 0.72, 0.6], `l${i}-${k}`));
+      return;
+    }
+    // manifold: splitters in a column, one beside each line it feeds; the belt runs down through them
+    const order = [...ps].sort((a, b) => yOfPiece(a) - yOfPiece(b));
+    const ys = order.map(yOfPiece);
+    draw([[BOX, y], [SPLIT_X - 13, ys[0]]], `sb${i}`);
+    order.forEach((p, k) => {
+      const last = k === order.length - 1;
+      if (!last) {
+        block(SPLIT_X, ys[k], 'splitter', `sp${i}-${k}`, k === 0 ? 'manifold' : undefined);
+        if (k < order.length - 2) draw([[SPLIT_X, ys[k] + 13], [SPLIT_X, ys[k + 1] - 13]], `chain${i}-${k}`);
+        label(draw([[SPLIT_X + 13, ys[k]], [end(p), ys[k]]], `p${i}-${k}`), p.rate, [0.7, 0.5, 0.85], `l${i}-${k}`);
+      } else {
+        // what's left after the last splitter carries straight on to the last line
+        const at = draw([[SPLIT_X, ys[k - 1] + 13], [SPLIT_X, ys[k]], [end(p), ys[k]]], `p${i}-${k}`);
+        label(at, p.rate, [0.7, 0.5, 0.85], `l${i}-${k}`);
+      }
+    });
   });
-  for (const { p, k, c, prefer } of placed) {
-    const text = `${fmt(p.rate)}/min`;
-    const wd = text.length * 5.8 + 8;
-    const spots = [...prefer, 0.1, 0.9].map((t) => c.at(t)).map((q) => ({ x: q.x - wd / 2, y: q.y - 8, w: wd, h: 15 }));
-    const r = spots.find((s) => !taken.some((t) => hit(t, s))) ?? spots[0];
-    taken.push(r);
-    pill(r.x + wd / 2, r.y + 8, text, `l${k}`);
-  }
 
-  const kinds = srcRows.filter(({ i }) => used[i].length > 1).map(({ i }) => splitKind(used[i].map((p) => p.rate)));
   return (
     <figure className="wiring">
       <svg viewBox={`0 0 ${W} ${H}`} width={W} height={H} role="img" aria-label={w.steps.join('. ')}>
-        <text x={0} y={12} fontSize={10} fill="var(--muted)">INCOMING BELTS</text>
+        <text x={0} y={12} fontSize={10} fill="var(--muted)">{fluid ? 'INCOMING PIPES' : 'INCOMING BELTS'}</text>
         <text x={W} y={12} fontSize={10} fill="var(--muted)" textAnchor="end">GOES TO</text>
         {belts}
         {nodes}
         {labels}
       </svg>
-      {(kinds.includes('2:1') || kinds.includes('uneven')) && (
+      {(kinds.includes('2:1') || kinds.includes('uneven') || kinds.includes('manifold')) && (
         <figcaption>
           {kinds.includes('2:1') && <div>* 2:1 — use all 3 splitter outputs and merge two of them into the bigger belt.</div>}
-          {kinds.includes('uneven') && <div>uneven — the side needing less fills up and the rest overflows on; works once belts back up.</div>}
+          {kinds.includes('uneven') && <div>uneven — the side needing less fills up and the rest flows on.</div>}
+          {kinds.includes('manifold') && (fluid
+            ? <div>manifold — one junction per branch along the pipe; pipes share the flow by themselves.</div>
+            : <div>manifold — splitters in a row along one belt: each line fills up and passes the rest to the next.</div>)}
         </figcaption>
       )}
     </figure>

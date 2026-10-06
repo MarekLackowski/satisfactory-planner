@@ -14,8 +14,9 @@ export type Wiring = {
   sinks: End[];
   pieces: Piece[];
   steps: string[];
-  splitters: number;
+  splitters: number; // pipeline junctions when fluid
   mergers: number;
+  fluid: boolean;
 };
 
 // LP results carry ~1e-4/min noise; anything below 0.01/min is the same amount in game
@@ -69,29 +70,37 @@ export function wire(src: End[], dst: End[]): Piece[] {
   return pieces;
 }
 
-/** kind of split a splitter has to do for these output amounts */
-export function splitKind(amounts: number[]): 'even' | '2:1' | 'uneven' {
+/**
+ * how a belt is divided: one splitter for an even 1:1 / 1:1:1 split or an exact 2:1 (3 outputs, 2 merged),
+ * a single splitter where one side just fills up (2 outputs), otherwise a manifold: splitters in a row,
+ * each taking off what its line needs while the rest flows on (a splitter has at most 3 outputs).
+ */
+export function splitKind(amounts: number[]): 'even' | '2:1' | 'uneven' | 'manifold' {
   const [a, b] = [...amounts].sort((x, y) => y - x);
   if (amounts.length <= 3 && amounts.every((x) => near(x, amounts[0]))) return 'even';
   if (amounts.length === 2 && near(a, 2 * b)) return '2:1';
-  return 'uneven';
+  return amounts.length === 2 ? 'uneven' : 'manifold';
 }
 
-/** how to build a splitter giving these amounts (a splitter shares evenly between its connected outputs) */
-function splitter(amounts: number[]) {
+/** how to build a split giving these amounts (a splitter shares evenly between its connected outputs) */
+function splitter(amounts: number[], fluid: boolean) {
   const k = amounts.length;
-  const [a, b] = [...amounts].sort((x, y) => y - x);
-  if (k <= 3 && amounts.every((x) => near(x, amounts[0]))) return { how: `Splitter, ${k} outputs, even split`, splitters: 1, mergers: 0 };
-  if (k === 2 && near(a, 2 * b)) return { how: 'Splitter, all 3 outputs; merge 2 of them for the larger share (exact 2:1)', splitters: 1, mergers: 1 };
-  return {
-    how: `Splitter${k > 3 ? ' chain' : ''}, ${k} outputs, uneven: the smaller outputs fill up and the rest overflows on`,
-    splitters: Math.ceil((k - 1) / 2),
-    mergers: 0,
-  };
+  if (fluid) {
+    // pipes balance themselves: a junction per branch-off (up to 3 outputs each), in a row for more
+    return k <= 3
+      ? { how: `Pipeline Junction, ${k} outputs`, splitters: 1, mergers: 0 }
+      : { how: `${k - 1} Pipeline Junctions in a row, one branch-off per line`, splitters: k - 1, mergers: 0 };
+  }
+  const kind = splitKind(amounts);
+  if (kind === 'even') return { how: `Splitter, ${k} outputs, even split`, splitters: 1, mergers: 0 };
+  if (kind === '2:1') return { how: 'Splitter, all 3 outputs; merge 2 of them for the larger share (exact 2:1)', splitters: 1, mergers: 1 };
+  if (kind === 'uneven') return { how: 'Splitter, 2 outputs: the side needing less fills up and the rest flows on', splitters: 1, mergers: 0 };
+  return { how: `Manifold: ${k - 1} splitters in a row, each takes off what its line needs and passes the rest on`, splitters: k - 1, mergers: 0 };
 }
 
-export function describe(title: string, key: string, src: End[], dst: End[], pieces: Piece[]): Wiring {
-  const lane = (p: Piece) => `${dst[p.to].label}${dst[p.to].lanes > 1 ? ` (belt ${p.lane + 1}/${dst[p.to].lanes})` : ''}`;
+export function describe(title: string, key: string, src: End[], dst: End[], pieces: Piece[], fluid = false): Wiring {
+  const per = fluid ? 'm³/min' : '/min';
+  const lane = (p: Piece) => `${dst[p.to].label}${dst[p.to].lanes > 1 ? ` (${fluid ? 'pipe' : 'belt'} ${p.lane + 1}/${dst[p.to].lanes})` : ''}`;
   const into = (p: Piece) => pieces.filter((q) => q.to === p.to && q.lane === p.lane);
   const steps: string[] = [];
   let splitters = 0;
@@ -99,16 +108,16 @@ export function describe(title: string, key: string, src: End[], dst: End[], pie
   src.forEach((s, i) => {
     const ps = pieces.filter((p) => p.from === i);
     if (!ps.length) return;
-    const head = `${s.label} (${fmt(s.rate)}/min)`;
+    const head = `${s.label} (${fmt(s.rate)}${per})`;
     if (ps.length === 1) {
       // a belt going whole into a merger is listed in that merger's step
       if (into(ps[0]).length === 1) steps.push(`${head} → straight to ${lane(ps[0])}`);
       return;
     }
-    const sp = splitter(ps.map((p) => p.rate));
+    const sp = splitter(ps.map((p) => p.rate), fluid);
     splitters += sp.splitters;
     mergers += sp.mergers;
-    steps.push(`${head} → ${sp.how}: ${ps.map((p) => `${fmt(p.rate)}/min → ${into(p).length > 1 ? 'merger for ' : ''}${lane(p)}`).join(', ')}`);
+    steps.push(`${head} → ${sp.how}: ${ps.map((p) => `${fmt(p.rate)}${per} → ${into(p).length > 1 ? (fluid ? 'junction for ' : 'merger for ') : ''}${lane(p)}`).join(', ')}`);
   });
   const done = new Set<string>();
   for (const p of pieces) {
@@ -117,7 +126,7 @@ export function describe(title: string, key: string, src: End[], dst: End[], pie
     if (ins.length < 2 || done.has(k)) continue;
     done.add(k);
     mergers += Math.ceil((ins.length - 1) / 2);
-    steps.push(`Merger → ${lane(p)}: ${ins.map((q) => `${fmt(q.rate)}/min from ${src[q.from].label}`).join(' + ')}`);
+    steps.push(`${fluid ? 'Pipeline Junction' : 'Merger'} → ${lane(p)}: ${ins.map((q) => `${fmt(q.rate)}${per} from ${src[q.from].label}`).join(' + ')}`);
   }
-  return { key, title, sources: src, sinks: dst, pieces, steps, splitters, mergers };
+  return { key, title, sources: src, sinks: dst, pieces, steps, splitters, mergers, fluid };
 }
