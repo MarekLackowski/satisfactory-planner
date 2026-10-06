@@ -469,7 +469,6 @@ export default function FactoryCanvas({ layout, fitKey, onMoveNode, playing, spe
         ...(b ? [`${g.machines.length}× ${b.name} in ${g.lines.length} line(s)`] : []),
         ...g.inputs.map((f) => `in: ${amount(f.item, f.rate)}`),
         ...g.outputs.map((f) => `out: ${amount(f.item, f.rate)}`),
-        ...(g.generates ? [`generates: ${fmt(g.generates)} MW`] : []),
         ...(g.power ? [`Power: ${fmt(g.power)} MW`] : []),
         ...(g.note ? [g.note] : []),
       ],

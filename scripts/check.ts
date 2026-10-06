@@ -289,3 +289,25 @@ for (const r of recipes.filter((x) => x.alt)) assert.ok(tierOf(r.id), `${r.name}
 assert.equal(tierOf('Recipe_Alternate_SteelRod_C')!.tier, 'A'); // community: A, A, A, S
 assert.equal(tierOf('Recipe_Alternate_ModularFrameHeavy_C')!.tier, 'S');
 console.log('all checks passed');
+
+// 2m) one belt split over several lines is a manifold on the canvas too: no block at the port,
+// a splitter on the trunk beside each line but the last, and the simulation feeds every line
+{
+  const s: Settings = { ...base, outputs: [{ item: 'Desc_IronPlate_C', rate: 300, maximize: false }] };
+  const p = buildPlan(await solve(s), s);
+  const g = p.groups.find((x) => x.id === 'Recipe_IngotIron_C')!;
+  const w = p.wirings.find((x) => x.key === 'in:Recipe_IngotIron_C:Desc_OreIron_C')!;
+  assert.ok(g.lines.length > 1 && w.splitters > 0, `test needs a split: ${g.lines.length} lines, ${w.steps.join(' | ')}`);
+  const l = layout(p, s);
+  const port = l.nodes.find((n) => n.group.id === g.id)!.inPort.Desc_OreIron_C;
+  const sim = buildSim(l);
+  const mine = sim.junctions.filter((j) => j.wiring?.key === w.key);
+  assert.ok(!mine.some((j) => Math.hypot(j.x - port.x, j.y - port.y) < 1), 'no splitter on the port');
+  assert.equal(mine.filter((j) => j.kind === 'splitter').length, g.lines.length - 1, 'one splitter per line but the last');
+  const out = sim.belts.filter((b) => b.seg.edge?.includes('>out_'));
+  const before = out.reduce((a, b) => a + b.sunk, 0);
+  for (let t = 0; t < 300; t += 0.05) step(sim, 0.05);
+  const per = ((out.reduce((a, b) => a + b.sunk, 0) - before) / 300) * 60;
+  assert.ok(Math.abs(per - 300) < 10, `simulated ${per.toFixed(1)}/min, planned 300`);
+}
+console.log('manifold trunk ok');

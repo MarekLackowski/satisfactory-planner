@@ -49,7 +49,7 @@ export function buildSim(layout: Layout, old?: Sim): Sim {
   });
   // splitters / mergers (and pipe junctions) where belts branch or join. A port where n parallel belts simply
   // continue as n line belts (or the other way round) needs none.
-  type Node = { at: Pt; ins: number; outs: number; lanesIn: number; lanesOut: number; fluid: boolean };
+  type Node = { at: Pt; ins: number; outs: number; lanesIn: number; lanesOut: number; fluid: boolean; lined?: boolean; via?: string };
   const nodes = new Map<string, Node>();
   const node = (k: string, at: Pt, fluid: boolean) => {
     if (!nodes.has(k)) nodes.set(k, { at, ins: 0, outs: 0, lanesIn: 0, lanesOut: 0, fluid });
@@ -61,23 +61,27 @@ export function buildSim(layout: Layout, old?: Sim): Sim {
     a.outs++;
     a.lanesOut += s.lanes.length;
     if (s.edge) a.at = s.pts[0]; // port junctions sit on the port, where links leave
+    if (s.join?.line !== undefined) a.lined = true;
+    if (s.join?.via?.startsWith('in:')) a.via = s.join.via; // trunk joints: splitters where feeds leave ...
     const e = node(endKey(s), s.pts[s.pts.length - 1], s.fluid);
     e.ins++;
     e.lanesIn += s.lanes.length;
     if (s.edge) e.at = s.pts[s.pts.length - 1]; // ... and where links arrive
+    if (s.join?.line !== undefined) e.lined = true;
+    if (s.join?.via?.startsWith('out:')) e.via = s.join.via; // ... mergers where collectors arrive
   }
   const junctions: Junction[] = [];
   const wiringOf = new Map(layout.wirings.map((w) => [w.key, w]));
   for (const [k, nd] of nodes) {
     const w = wiringOf.get(k);
-    if (w) {
+    if (w && nd.lined) {
       // a port: a block only where its recipe needs a splitter or merger
       if (w.splitters || w.mergers) junctions.push({ ...nd.at, kind: nd.fluid ? 'junction' : w.splitters ? 'splitter' : 'merger', wiring: w });
       continue;
     }
     if (!nd.ins || !nd.outs) continue; // pure source or sink
     if ((nd.ins === 1 || nd.outs === 1) && nd.lanesIn === nd.lanesOut) continue; // belts just continue
-    junctions.push({ ...nd.at, kind: nd.fluid ? 'junction' : nd.lanesOut > nd.lanesIn || nd.outs > nd.ins ? 'splitter' : 'merger' });
+    junctions.push({ ...nd.at, kind: nd.fluid ? 'junction' : nd.lanesOut > nd.lanesIn || nd.outs > nd.ins ? 'splitter' : 'merger', wiring: wiringOf.get(nd.via ?? k) });
   }
   // ports: send items exactly as the build recipe says
   for (const w of layout.wirings) {

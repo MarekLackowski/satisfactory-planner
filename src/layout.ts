@@ -20,7 +20,7 @@ export type Segment = {
   cum: number[]; // cumulative length at each point
   edge?: string; // inter-group edge id
   // ends attached to a group port: belts meet there even though parallel lanes start/end side by side
-  join?: { start?: string; end?: string; line?: number };
+  join?: { start?: string; end?: string; line?: number; via?: string }; // via: manifold of this port's recipe
 };
 export type MachineBox = { x: number; y: number; w: number; h: number; clock: number; shards: number };
 export type NodeBox = {
@@ -112,7 +112,7 @@ function size(g: Group, dir: Dir, s: Settings) {
 }
 
 /** internal geometry of a group: each line has its own feed belt from the input port and its own belt to the output port */
-function inner(n: NodeBox, dir: Dir, s: Settings, segs: Segment[], rin: number[], rout: number[]) {
+function inner(n: NodeBox, dir: Dir, s: Settings, segs: Segment[], rin: number[], rout: number[], wirings: Wiring[]) {
   const g = n.group;
   const ni = g.inputs.length;
   const no = g.outputs.length;
@@ -145,6 +145,13 @@ function inner(n: NodeBox, dir: Dir, s: Settings, segs: Segment[], rin: number[]
   // line l's belt runs beside the port, line 0 outermost so feeds/collectors of other lines are never crossed
   const nl = g.lines.length;
   const off = (l: number) => ((nl - 1) / 2 - l) * LANE_GAP;
+  // the recipe splits / merges between lines: one trunk along the lines with a splitter / merger at each line
+  // (a manifold), instead of a belt per line straight from the port
+  const wk = (k: string) => wirings.find((w) => w.key === k);
+  const trunkIn = g.inputs.map((f) => nl > 1 && !!wk(`in:${g.id}:${f.item}`)?.splitters);
+  const trunkOut = g.outputs.map((f) => nl > 1 && !!wk(`out:${g.id}:${f.item}`)?.mergers);
+  const inRow = (l: number, i: number) => l * lineH + 6 + (ni - 1 - rin[i]) * L;
+  const outRow = (l: number, j: number) => l * lineH + ni * L + 10 + MW + 10 + rout[j] * L;
   g.lines.forEach((line, l) => {
     const top = l * lineH;
     const mb = top + ni * L + 10;
@@ -157,11 +164,11 @@ function inner(n: NodeBox, dir: Dir, s: Settings, segs: Segment[], rin: number[]
     });
     line.inputs.forEach((f, i) => {
       // rightmost feed gets the top row, so feeds heading to lower rows never cross a row above them
-      const b = top + 6 + (ni - 1 - rin[i]) * L;
-      const x = PAD + rin[i] * L + L / 2 + off(l);
-      // feed from the port straight into this line's manifold
-      let prev: [number, number][] = [[x, bIn], [x, b]];
-      let join: Segment['join'] = { start: `in:${g.id}:${f.item}`, line: l };
+      const b = inRow(l, i);
+      const x = PAD + rin[i] * L + L / 2 + (trunkIn[i] ? 0 : off(l));
+      // feed from the port (or from its splitter on the trunk) into this line's manifold
+      let prev: [number, number][] = trunkIn[i] ? [[x, b]] : [[x, bIn], [x, b]];
+      let join: Segment['join'] = trunkIn[i] ? { via: `in:${g.id}:${f.item}` } : { start: `in:${g.id}:${f.item}`, line: l };
       boxes.forEach((a, k) => {
         const da = a + port(rin[i], ni);
         seg([...prev, [da, b]], f.item, f.segs[k], join);
@@ -171,8 +178,8 @@ function inner(n: NodeBox, dir: Dir, s: Settings, segs: Segment[], rin: number[]
       });
     });
     line.outputs.forEach((f, j) => {
-      const b = mb + MW + 10 + rout[j] * L;
-      const x = A - PAD - rout[j] * L - L / 2 + off(l);
+      const b = outRow(l, j);
+      const x = A - PAD - rout[j] * L - L / 2 + (trunkOut[j] ? 0 : off(l));
       let prev: [number, number] | null = null;
       boxes.forEach((a, k) => {
         const ua = a + port(rout[j], no);
@@ -180,9 +187,37 @@ function inner(n: NodeBox, dir: Dir, s: Settings, segs: Segment[], rin: number[]
         if (prev) seg([prev, [ua, b]], f.item, f.segs[k - 1]);
         prev = [ua, b];
       });
-      // collector straight out to the port
-      seg([prev!, [x, b], [x, bOut]], f.item, f.segs[f.segs.length - 1], { end: `out:${g.id}:${f.item}`, line: l });
+      // collector straight out to the port, or onto the trunk's merger
+      if (trunkOut[j]) seg([prev!, [x, b]], f.item, f.segs[f.segs.length - 1], { via: `out:${g.id}:${f.item}` });
+      else seg([prev!, [x, b], [x, bOut]], f.item, f.segs[f.segs.length - 1], { end: `out:${g.id}:${f.item}`, line: l });
     });
+  });
+  // trunks: what's left flows on past each line's splitter; what's collected grows at each merger
+  const rate = (l: number, side: 'inputs' | 'outputs', i: number) => {
+    const sg = g.lines[l][side][i].segs;
+    return side === 'inputs' ? sg[0] : sg[sg.length - 1];
+  };
+  g.inputs.forEach((f, i) => {
+    if (!trunkIn[i]) return;
+    const x = PAD + rin[i] * L + L / 2;
+    const via = `in:${g.id}:${f.item}`;
+    let left = g.lines.reduce((a, _, l) => a + rate(l, 'inputs', i), 0);
+    seg([[x, bIn], [x, inRow(0, i)]], f.item, left, { start: via });
+    for (let l = 0; l < nl - 1; l++) {
+      left -= rate(l, 'inputs', i);
+      seg([[x, inRow(l, i)], [x, inRow(l + 1, i)]], f.item, left, { via });
+    }
+  });
+  g.outputs.forEach((f, j) => {
+    if (!trunkOut[j]) return;
+    const x = A - PAD - rout[j] * L - L / 2;
+    const via = `out:${g.id}:${f.item}`;
+    let sum = 0;
+    for (let l = 0; l < nl; l++) {
+      sum += rate(l, 'outputs', j);
+      const last = l === nl - 1;
+      seg([[x, outRow(l, j)], [x, last ? bOut : outRow(l + 1, j)]], f.item, sum, last ? { end: via, via } : { via });
+    }
   });
 }
 
@@ -350,7 +385,7 @@ export function geometry(plan: Plan, s: Settings, arr: Arranged, moved: Record<s
     // inputs fill slots from the low side, outputs from the high side
     const rin = slots(id, n.group.inputs, (item) => plan.edges.filter((e) => e.to === id && e.item === item).map((e) => e.from), false);
     const rout = slots(id, n.group.outputs, (item) => plan.edges.filter((e) => e.from === id && e.item === item).map((e) => e.to), true);
-    inner(n, dir, s, segs, rin, rout);
+    inner(n, dir, s, segs, rin, rout, plan.wirings);
   }
   const byId = Object.fromEntries(nodes.map((n) => [n.group.id, n]));
   const stub = (p: Pt, k: number): Pt => (dir === 'TB' ? { x: p.x, y: p.y + k * STUB } : { x: p.x + k * STUB, y: p.y });
