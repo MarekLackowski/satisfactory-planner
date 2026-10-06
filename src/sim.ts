@@ -49,7 +49,7 @@ export function buildSim(layout: Layout, old?: Sim): Sim {
   });
   // splitters / mergers (and pipe junctions) where belts branch or join. A port where n parallel belts simply
   // continue as n line belts (or the other way round) needs none.
-  type Node = { at: Pt; ins: number; outs: number; lanesIn: number; lanesOut: number; fluid: boolean; lined?: boolean; via?: string };
+  type Node = { at: Pt; ins: number; outs: number; lanesIn: number; lanesOut: number; fluid: boolean; via?: string };
   const nodes = new Map<string, Node>();
   const node = (k: string, at: Pt, fluid: boolean) => {
     if (!nodes.has(k)) nodes.set(k, { at, ins: 0, outs: 0, lanesIn: 0, lanesOut: 0, fluid });
@@ -61,24 +61,18 @@ export function buildSim(layout: Layout, old?: Sim): Sim {
     a.outs++;
     a.lanesOut += s.lanes.length;
     if (s.edge) a.at = s.pts[0]; // port junctions sit on the port, where links leave
-    if (s.join?.line !== undefined) a.lined = true;
-    if (s.join?.via?.startsWith('in:')) a.via = s.join.via; // trunk joints: splitters where feeds leave ...
+    if (s.join?.via) a.via = s.join.via; // splitters / mergers of a port's recipe show the recipe
     const e = node(endKey(s), s.pts[s.pts.length - 1], s.fluid);
     e.ins++;
     e.lanesIn += s.lanes.length;
     if (s.edge) e.at = s.pts[s.pts.length - 1]; // ... and where links arrive
-    if (s.join?.line !== undefined) e.lined = true;
-    if (s.join?.via?.startsWith('out:')) e.via = s.join.via; // ... mergers where collectors arrive
+    if (s.join?.via) e.via = s.join.via;
   }
   const junctions: Junction[] = [];
   const wiringOf = new Map(layout.wirings.map((w) => [w.key, w]));
   for (const [k, nd] of nodes) {
     const w = wiringOf.get(k);
-    if (w && nd.lined) {
-      // a port: a block only where its recipe needs a splitter or merger
-      if (w.splitters || w.mergers) junctions.push({ ...nd.at, kind: nd.fluid ? 'junction' : w.splitters ? 'splitter' : 'merger', wiring: w });
-      continue;
-    }
+    if (w) continue; // a port: the recipe's belts leave / reach it one by one, its blocks sit on them
     if (!nd.ins || !nd.outs) continue; // pure source or sink
     if ((nd.ins === 1 || nd.outs === 1) && nd.lanesIn === nd.lanesOut) continue; // belts just continue
     junctions.push({ ...nd.at, kind: nd.fluid ? 'junction' : nd.lanesOut > nd.lanesIn || nd.outs > nd.ins ? 'splitter' : 'merger', wiring: wiringOf.get(nd.via ?? k) });
@@ -90,15 +84,22 @@ export function buildSim(layout: Layout, old?: Sim): Sim {
     const sinkBelt = (ref: string) =>
       starters.find(({ b }) => (ref.startsWith('edge:') ? `edge:${b.seg.edge}` === ref : `line:${b.seg.join?.line}` === ref))?.i;
     for (const { b } of enders) {
-      b.route = b.lanes.map((_, li) => {
+      if (b.seg.join?.dst) {
+        // the recipe's column for one outgoing belt: onto exactly that belt
+        const [ref, lane] = b.seg.join.dst.split('#');
+        const t = sinkBelt(ref);
+        if (t !== undefined) b.route = [[{ belt: t, lane: Number(lane), rate: 1 }]];
+      } else b.route = b.lanes.map((_, li) => {
         const ref = b.seg.edge ? `edge:${b.seg.edge}#${li}` : `line:${b.seg.join?.line}`;
         const from = w.sources.findIndex((s) => s.ref === ref);
+        const col = starters.find(({ b: c }) => c.seg.join?.src === from);
+        if (col) return [{ belt: col.i, lane: 0, rate: 1 }]; // the recipe's column for this incoming belt
         return w.pieces
           .filter((p) => p.from === from)
           .map((p) => ({ belt: sinkBelt(w.sinks[p.to].ref) ?? -1, lane: p.lane, rate: p.rate }))
           .filter((r) => r.belt >= 0);
       });
-      b.rsent = b.route.map((r) => r.map(() => 0));
+      b.rsent = b.route?.map((r) => r.map(() => 0));
     }
   }
   const sim = { belts, junctions };

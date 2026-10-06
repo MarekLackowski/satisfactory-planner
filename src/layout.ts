@@ -2,7 +2,7 @@ import dagre from '@dagrejs/dagre';
 import { items, type Conveyor } from './game';
 import { buildings, extractors } from './game';
 import { conveyorFor, conveyorsFor, type Group, type Plan } from './plan';
-import type { Wiring } from './wiring';
+import { splitKind, type Wiring } from './wiring';
 import type { Settings } from './solver';
 
 export type Dir = 'TB' | 'LR';
@@ -20,7 +20,8 @@ export type Segment = {
   cum: number[]; // cumulative length at each point
   edge?: string; // inter-group edge id
   // ends attached to a group port: belts meet there even though parallel lanes start/end side by side
-  join?: { start?: string; end?: string; line?: number; via?: string }; // via: manifold of this port's recipe
+  // via: belt drawn from this port's build recipe; src / dst: the recipe's source / sink belt it starts / ends at
+  join?: { start?: string; end?: string; line?: number; via?: string; src?: number; dst?: string };
 };
 export type MachineBox = { x: number; y: number; w: number; h: number; clock: number; shards: number };
 export type NodeBox = {
@@ -145,13 +146,16 @@ function inner(n: NodeBox, dir: Dir, s: Settings, segs: Segment[], rin: number[]
   // line l's belt runs beside the port, line 0 outermost so feeds/collectors of other lines are never crossed
   const nl = g.lines.length;
   const off = (l: number) => ((nl - 1) / 2 - l) * LANE_GAP;
-  // the recipe splits / merges between lines: one trunk along the lines with a splitter / merger at each line
-  // (a manifold), instead of a belt per line straight from the port
+  // with a build recipe, every belt between the port and the lines is drawn as the recipe says: each incoming
+  // belt runs down its own column, a splitter where it feeds several lines (one, or one per line for a manifold),
+  // a merger where a line takes from several belts; outputs the same way round
   const wk = (k: string) => wirings.find((w) => w.key === k);
-  const trunkIn = g.inputs.map((f) => nl > 1 && !!wk(`in:${g.id}:${f.item}`)?.splitters);
-  const trunkOut = g.outputs.map((f) => nl > 1 && !!wk(`out:${g.id}:${f.item}`)?.mergers);
   const inRow = (l: number, i: number) => l * lineH + 6 + (ni - 1 - rin[i]) * L;
   const outRow = (l: number, j: number) => l * lineH + ni * L + 10 + MW + 10 + rout[j] * L;
+  const xf = PAD + ni * L + 6; // where a line's feed starts (merger if several belts feed it)
+  const xe = A - PAD - no * L - 2; // where a line's collector ends (splitter if it goes to several belts)
+  const wIn = g.inputs.map((f) => wk(`in:${g.id}:${f.item}`));
+  const wOut = g.outputs.map((f) => wk(`out:${g.id}:${f.item}`));
   g.lines.forEach((line, l) => {
     const top = l * lineH;
     const mb = top + ni * L + 10;
@@ -165,10 +169,10 @@ function inner(n: NodeBox, dir: Dir, s: Settings, segs: Segment[], rin: number[]
     line.inputs.forEach((f, i) => {
       // rightmost feed gets the top row, so feeds heading to lower rows never cross a row above them
       const b = inRow(l, i);
-      const x = PAD + rin[i] * L + L / 2 + (trunkIn[i] ? 0 : off(l));
-      // feed from the port (or from its splitter on the trunk) into this line's manifold
-      let prev: [number, number][] = trunkIn[i] ? [[x, b]] : [[x, bIn], [x, b]];
-      let join: Segment['join'] = trunkIn[i] ? { via: `in:${g.id}:${f.item}` } : { start: `in:${g.id}:${f.item}`, line: l };
+      const x = PAD + rin[i] * L + L / 2 + off(l);
+      // from the recipe's columns, or straight from the port into this line's manifold
+      let prev: [number, number][] = wIn[i] ? [[xf, b]] : [[x, bIn], [x, b]];
+      let join: Segment['join'] = wIn[i] ? undefined : { start: `in:${g.id}:${f.item}`, line: l };
       boxes.forEach((a, k) => {
         const da = a + port(rin[i], ni);
         seg([...prev, [da, b]], f.item, f.segs[k], join);
@@ -179,7 +183,7 @@ function inner(n: NodeBox, dir: Dir, s: Settings, segs: Segment[], rin: number[]
     });
     line.outputs.forEach((f, j) => {
       const b = outRow(l, j);
-      const x = A - PAD - rout[j] * L - L / 2 + (trunkOut[j] ? 0 : off(l));
+      const x = A - PAD - rout[j] * L - L / 2 + off(l);
       let prev: [number, number] | null = null;
       boxes.forEach((a, k) => {
         const ua = a + port(rout[j], no);
@@ -187,37 +191,101 @@ function inner(n: NodeBox, dir: Dir, s: Settings, segs: Segment[], rin: number[]
         if (prev) seg([prev, [ua, b]], f.item, f.segs[k - 1]);
         prev = [ua, b];
       });
-      // collector straight out to the port, or onto the trunk's merger
-      if (trunkOut[j]) seg([prev!, [x, b]], f.item, f.segs[f.segs.length - 1], { via: `out:${g.id}:${f.item}` });
+      if (wOut[j]) seg([prev!, [xe, b]], f.item, f.segs[f.segs.length - 1]);
       else seg([prev!, [x, b], [x, bOut]], f.item, f.segs[f.segs.length - 1], { end: `out:${g.id}:${f.item}`, line: l });
     });
   });
-  // trunks: what's left flows on past each line's splitter; what's collected grows at each merger
-  const rate = (l: number, side: 'inputs' | 'outputs', i: number) => {
-    const sg = g.lines[l][side][i].segs;
-    return side === 'inputs' ? sg[0] : sg[sg.length - 1];
+  const lineOf = (ref: string) => Number(ref.slice(5)); // line:<l>
+  // several belts meeting one line's merger (or leaving its splitter) come in from the side, above and below
+  // instead of sharing one row: nearest column straight, the next one a third of a row up, the next down
+  const shift = <T,>(list: { p: T; line: number; x: number }[], near: 1 | -1) => {
+    const dy = new Map<T, number>();
+    const seen = new Map<number, number>();
+    for (const { p, line } of [...list].sort((a, b) => near * (b.x - a.x))) {
+      const k = seen.get(line) ?? 0;
+      seen.set(line, k + 1);
+      dy.set(p, (k === 0 ? 0 : k % 2 ? -1 : 1) * Math.ceil(k / 2) * (L / 3));
+    }
+    return dy;
+  };
+  // columns side by side around the port; the one reaching furthest outermost so fewer branches cross it
+  const columns = (center: number, deep: number[], outward: 1 | -1) => {
+    const order = deep.map((d, k) => ({ d, k })).sort((p, q) => q.d - p.d);
+    const xs: number[] = [];
+    // ponytail: more columns than the port slot is wide (rare) just overlap a little
+    order.forEach(({ k }, r) => (xs[k] = center + outward * (r - (deep.length - 1) / 2) * LANE_GAP));
+    return xs;
   };
   g.inputs.forEach((f, i) => {
-    if (!trunkIn[i]) return;
-    const x = PAD + rin[i] * L + L / 2;
-    const via = `in:${g.id}:${f.item}`;
-    let left = g.lines.reduce((a, _, l) => a + rate(l, 'inputs', i), 0);
-    seg([[x, bIn], [x, inRow(0, i)]], f.item, left, { start: via });
-    for (let l = 0; l < nl - 1; l++) {
-      left -= rate(l, 'inputs', i);
-      seg([[x, inRow(l, i)], [x, inRow(l + 1, i)]], f.item, left, { via });
-    }
+    const w = wIn[i];
+    if (!w) return;
+    const via = w.key;
+    const srcs = w.sources.map((_, s) => s).filter((s) => w.pieces.some((p) => p.from === s));
+    // pieces of each source, top line first; one splitter for a plain split, one per line for a manifold
+    const ps = srcs.map((s) => w.pieces.filter((p) => p.from === s).sort((p, q) => p.to - q.to));
+    const chain = ps.map((list) => list.length > 1 && (w.fluid ? list.length > 3 : splitKind(list.map((p) => p.rate)) === 'manifold'));
+    // a plain splitter: 1st output right to its line, 2nd straight on down the same column, 3rd left down its own
+    const cols = ps.flatMap((list, k) => {
+      const deep = (m: number) => lineOf(w.sinks[list[m].to].ref);
+      if (chain[k]) return [{ k, m: 0, deep: deep(list.length - 1) }];
+      return [{ k, m: 0, deep: deep(Math.min(1, list.length - 1)) }, ...(list.length > 2 ? [{ k, m: 2, deep: deep(2) }] : [])];
+    });
+    const xs = columns(PAD + rin[i] * L + L / 2, cols.map((c) => c.deep), 1);
+    const colX = (k: number, m: number) => xs[cols.findIndex((c) => c.k === k && (chain[k] || c.m === (m < 2 ? 0 : 2)))];
+    const base = (p: (typeof ps)[number][number]) => inRow(lineOf(w.sinks[p.to].ref), i);
+    const dy = shift(ps.flatMap((list, k) => list.map((p, m) => ({ p, line: lineOf(w.sinks[p.to].ref), x: colX(k, chain[k] ? 0 : m) }))), 1);
+    const row = (p: (typeof ps)[number][number]) => base(p) + dy.get(p)!;
+    ps.forEach((list, k) => {
+      const x0 = colX(k, 0);
+      let left = list.reduce((a, p) => a + p.rate, 0);
+      seg([[x0, bIn], [x0, row(list[0])]], f.item, left, { start: via, src: srcs[k] });
+      list.forEach((p, m) => {
+        if (chain[k] || m === 0) {
+          // branch off at this line; a manifold's belt carries the rest on to the next line
+          seg([[x0, row(p)], [xf, row(p)], [xf, base(p)]], f.item, p.rate, { via });
+          left -= p.rate;
+          if (chain[k] && m < list.length - 1) seg([[x0, row(p)], [x0, row(list[m + 1])]], f.item, left, { via });
+        } else {
+          const x = colX(k, m);
+          seg([[x0, row(list[0])], [x, row(list[0])], [x, row(p)], [xf, row(p)], [xf, base(p)]], f.item, p.rate, { via });
+        }
+      });
+    });
   });
   g.outputs.forEach((f, j) => {
-    if (!trunkOut[j]) return;
-    const x = A - PAD - rout[j] * L - L / 2;
-    const via = `out:${g.id}:${f.item}`;
-    let sum = 0;
-    for (let l = 0; l < nl; l++) {
-      sum += rate(l, 'outputs', j);
-      const last = l === nl - 1;
-      seg([[x, outRow(l, j)], [x, last ? bOut : outRow(l + 1, j)]], f.item, sum, last ? { end: via, via } : { via });
-    }
+    const w = wOut[j];
+    if (!w) return;
+    const via = w.key;
+    // one column per outgoing belt, collecting from the lines top to bottom: a merger at each line it takes
+    // from, or a single merger at the last one for up to 3 belts
+    const belts = w.sinks.flatMap((d, to) => Array.from({ length: d.lanes }, (_, lane) => ({ to, lane, ps: w.pieces.filter((p) => p.to === to && p.lane === lane).sort((p, q) => p.from - q.from) }))).filter((x) => x.ps.length);
+    const chain = belts.map((x) => x.ps.length > 3);
+    const cols = belts.flatMap((x, k) => (chain[k] || x.ps.length === 1 ? [{ k, m: 0, deep: lineOf(w.sources[x.ps[0].from].ref) }] : x.ps.slice(0, -1).map((p, m) => ({ k, m, deep: lineOf(w.sources[p.from].ref) }))));
+    const xs = columns(A - PAD - rout[j] * L - L / 2, cols.map((c) => -c.deep), -1);
+    const colX = (k: number, m: number) => xs[cols.findIndex((c) => c.k === k && (chain[k] || belts[k].ps.length === 1 || c.m === m))];
+    const base = (p: (typeof belts)[number]['ps'][number]) => outRow(lineOf(w.sources[p.from].ref), j);
+    const xOf = (k: number, m: number) => colX(k, chain[k] || belts[k].ps.length === 1 ? 0 : Math.min(m, belts[k].ps.length - 2));
+    const dy = shift(belts.flatMap((x, k) => x.ps.map((p, m) => ({ p, line: lineOf(w.sources[p.from].ref), x: xOf(k, m) }))), -1);
+    const row = (p: (typeof belts)[number]['ps'][number]) => base(p) + dy.get(p)!;
+    belts.forEach((x, k) => {
+      const end = { end: via, dst: `${w.sinks[x.to].ref}#${x.lane}`, via };
+      const last = x.ps[x.ps.length - 1];
+      const xl = colX(k, chain[k] ? 0 : x.ps.length - 2);
+      if (chain[k] || x.ps.length === 1) {
+        let sum = 0;
+        x.ps.forEach((p, m) => {
+          sum += p.rate;
+          seg([[xe, base(p)], [xe, row(p)], [xl, row(p)]], f.item, p.rate, { via });
+          const next = x.ps[m + 1];
+          seg([[xl, row(p)], [xl, next ? row(next) : bOut]], f.item, sum, next ? { via } : end);
+        });
+        return;
+      }
+      // up to 3 belts run down side by side into one merger beside the last line
+      x.ps.slice(0, -1).forEach((p, m) => seg([[xe, base(p)], [xe, row(p)], [colX(k, m), row(p)], [colX(k, m), row(last)], [xl, row(last)]], f.item, p.rate, { via }));
+      seg([[xe, base(last)], [xe, row(last)], [xl, row(last)]], f.item, last.rate, { via });
+      seg([[xl, row(last)], [xl, bOut]], f.item, x.ps.reduce((a, p) => a + p.rate, 0), end);
+    });
   });
 }
 
