@@ -71,6 +71,41 @@ export function wire(src: End[], dst: End[]): Piece[] {
 }
 
 /**
+ * belts into production lines stacked one below the other: fill the lines top to bottom from the belts in turn
+ * (a staircase), so each belt feeds neighbouring lines and each line takes from neighbouring belts – nothing
+ * crosses and it builds like a manifold. Belts are put in the order needing the fewest splits and merges.
+ */
+export function staircase(src: End[], dst: End[]): { src: End[]; pieces: Piece[] } {
+  const fill = (order: number[]) => {
+    const pieces: Piece[] = [];
+    let k = 0;
+    let left = src[order[0]]?.rate ?? 0;
+    dst.forEach((d, j) => {
+      let need = d.rate;
+      while (need > TOL && k < order.length) {
+        const r = Math.min(left, need);
+        if (r > TOL) pieces.push({ from: k, to: j, lane: 0, rate: near(left, need) ? left : r });
+        need -= r;
+        left -= r;
+        if (left <= TOL) left = src[order[++k]]?.rate ?? 0;
+      }
+    });
+    return pieces;
+  };
+  const idx = src.map((_, i) => i);
+  // ponytail: every order up to 6 belts (720 tries), beyond that biggest first
+  const orders = src.length <= 6 ? perms(idx) : [idx.sort((a, b) => src[b].rate - src[a].rate)];
+  let best = { order: idx, pieces: fill(idx) };
+  for (const order of orders) {
+    const pieces = fill(order);
+    if (pieces.length < best.pieces.length) best = { order, pieces };
+  }
+  return { src: best.order.map((i) => src[i]), pieces: best.pieces };
+}
+
+const perms = (a: number[]): number[][] => (a.length <= 1 ? [a] : a.flatMap((x, i) => perms([...a.slice(0, i), ...a.slice(i + 1)]).map((p) => [x, ...p])));
+
+/**
  * how a belt is divided: one splitter for an even 1:1 / 1:1:1 split or an exact 2:1 (3 outputs, 2 merged),
  * a single splitter where one side just fills up (2 outputs), otherwise a manifold: splitters in a row,
  * each taking off what its line needs while the rest flows on (a splitter has at most 3 outputs).

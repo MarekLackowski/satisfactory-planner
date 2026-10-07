@@ -204,7 +204,8 @@ function inner(n: NodeBox, dir: Dir, s: Settings, segs: Segment[], rin: number[]
     for (const { p, line } of [...list].sort((a, b) => near * (b.x - a.x))) {
       const k = seen.get(line) ?? 0;
       seen.set(line, k + 1);
-      dy.set(p, (k === 0 ? 0 : k % 2 ? -1 : 1) * Math.ceil(k / 2) * (L / 3));
+      // the 2nd on the side where the nearer column doesn't run (below it for inputs, above for outputs)
+      dy.set(p, (k === 0 ? 0 : k % 2 ? near : -near) * Math.ceil(k / 2) * (L / 3));
     }
     return dy;
   };

@@ -3,7 +3,7 @@ import {
   type Conveyor, type Flow,
 } from './game';
 import { minerCap, solveClean as solve, type Settings, type Solution } from './solver';
-import { describe, wire, type End, type Wiring } from './wiring';
+import { describe, staircase, wire, type End, type Wiring } from './wiring';
 
 export type Machine = { clock: number; shards: number };
 export type Line = {
@@ -281,7 +281,8 @@ export function buildPlan(sol: Solution, s: Settings): Plan {
       const src: End[] = links.flatMap((e) =>
         e.belts.map((_, k) => ({ label: `${byId[e.from].label} ${items[f.item].fluid ? 'pipe' : 'belt'}${e.belts.length > 1 ? ` ${k + 1}/${e.belts.length}` : ''}`, icon: groupIcon(byId[e.from], f.item), rate: e.laneRates[k], lanes: 1, cap: Infinity, ref: `edge:${e.id}#${k}` })));
       const dst: End[] = g.lines.map((ln, l) => ({ label: lineName(g, l), icon: nameOf(g.building!), rate: ln.inputs[i].segs[0], lanes: 1, cap: Infinity, ref: `line:${l}` }));
-      wirings.push(describe(`${g.label}: ${nameOf(f.item)} in`, `in:${g.id}:${f.item}`, src.filter((x) => x.rate > 0.01), dst, wire(src.filter((x) => x.rate > 0.01), dst), items[f.item].fluid));
+      const st = staircase(src.filter((x) => x.rate > 0.01), dst);
+      wirings.push(describe(`${g.label}: ${nameOf(f.item)} in`, `in:${g.id}:${f.item}`, st.src, dst, st.pieces, items[f.item].fluid));
     });
   }
   for (const w of wirings) {

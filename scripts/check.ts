@@ -320,3 +320,18 @@ console.log('all checks passed');
   for (const [id, v] of list[2].raw) near(sol.imports.get(id) ?? 0, v, `limited factory ${id}`);
   console.log('autoplanner ok');
 }
+
+// line inputs fill the lines top to bottom (staircase): every belt feeds neighbouring lines only
+{
+  const s: Settings = { ...base, beltMk: [1, 2, 3], cheapBelts: true, alts: ['Recipe_Alternate_Wire_1_C'], outputs: [{ item: 'Desc_Cable_C', rate: 322.9, maximize: false }] };
+  const p = buildPlan(await solve(s), s);
+  for (const w of p.wirings.filter((x) => x.key.startsWith('in:'))) {
+    for (let i = 0; i < w.sources.length; i++) {
+      const to = w.pieces.filter((x) => x.from === i).map((x) => x.to).sort((a, b) => a - b);
+      to.forEach((t, k) => k && assert.equal(t, to[k - 1] + 1, `${w.title}: belt ${i} skips a line`));
+      const after = w.pieces.filter((x) => x.from > i).map((x) => x.to);
+      assert.ok(after.every((t) => t >= to[to.length - 1]), `${w.title}: belts cross`);
+    }
+  }
+  console.log('staircase ok');
+}
