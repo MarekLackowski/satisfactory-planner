@@ -42,9 +42,10 @@ type Props = {
   onNew: () => void;
   onDuplicate: (id: string) => void;
   onDelete: (id: string) => void;
+  children?: React.ReactNode; // the autoplanner
 };
 
-export default function FactoriesPanel({ f, naming, onStart, onRename, onOpen, onNew, onDuplicate, onDelete }: Props) {
+export default function FactoriesPanel({ f, naming, onStart, onRename, onOpen, onNew, onDuplicate, onDelete, children }: Props) {
   const cur = f.list.find((x) => x.id === f.active);
   const nameRef = useRef<HTMLInputElement>(null);
   useEffect(() => {
@@ -71,6 +72,7 @@ export default function FactoriesPanel({ f, naming, onStart, onRename, onOpen, o
           <button onClick={onNew}>+ New factory</button>
         </div>
       </section>}
+      {children}
       {f.list.length > 0 && <section>
         <h2>Saved factories <small>({f.list.length})</small></h2>
         <ul className="factories">

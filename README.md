@@ -2,7 +2,7 @@
 
 **Live:** https://mareklackowski.github.io/satisfactory-planner/
 
-Production calculator for Satisfactory 1.x. Pick your unlocked alternate recipes, buildings and belt tiers, set inputs (resource rates or miners on impure/normal/pure nodes) and the outputs you want — or maximize them. A linear-programming solver (HiGHS) finds the optimal recipe mix; the factory is laid out as a graph with manifolds, parallel belts and belt tiers, and the item flow is animated live.
+Production calculator for Satisfactory 1.x. Pick your unlocked alternate recipes (or let the autoplanner suggest a few ways to make a product), buildings and belt tiers, set inputs (resource rates or miners on impure/normal/pure nodes) and the outputs you want — or maximize them. A linear-programming solver (HiGHS) finds the optimal recipe mix; the factory is laid out as a graph with manifolds, parallel belts and belt tiers, and the item flow is animated live.
 
 If you find it useful: [☕ buy me a coffee](https://ko-fi.com/mareklackowski)
 

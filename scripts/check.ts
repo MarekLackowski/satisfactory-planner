@@ -1,10 +1,11 @@
 // Self-check of solver + plan. Run: npx tsx scripts/check.ts
 import assert from 'node:assert/strict';
-import { buildings, extractors, recipes, tierOf } from '../src/game';
+import { buildings, extractors, recipes } from '../src/game';
 import { layout } from '../src/layout';
 import { buildPlan, conveyorFor, solvePlan } from '../src/plan';
 import { buildSim, step } from '../src/sim';
 import { solve, type Settings } from '../src/solver';
+import { autoplan } from '../src/autoplan';
 
 const base: Settings = {
   outputs: [], inputs: [], unlimitedRaw: true, unlimitedWater: true, alts: [],
@@ -284,11 +285,6 @@ await assert.rejects(solve({ ...base, outputs: [{ item: 'Desc_IronPlate_C', rate
   }
   console.log('HMF with all alts:', p.groups.length, 'groups,', p.power.toFixed(0), 'MW');
 }
-// every alternate is on the tier list (re-run `npm run tiers` after `npm run data`)
-for (const r of recipes.filter((x) => x.alt)) assert.ok(tierOf(r.id), `${r.name} has no tier`);
-assert.equal(tierOf('Recipe_Alternate_SteelRod_C')!.tier, 'A'); // community: A, A, A, S
-assert.equal(tierOf('Recipe_Alternate_ModularFrameHeavy_C')!.tier, 'S');
-console.log('all checks passed');
 
 // 2m) one belt split over several lines is a manifold on the canvas too: no block at the port,
 // a splitter on the trunk beside each line but the last, and the simulation feeds every line
@@ -310,4 +306,17 @@ console.log('all checks passed');
   const per = ((out.reduce((a, b) => a + b.sunk, 0) - before) / 300) * 60;
   assert.ok(Math.abs(per - 300) < 10, `simulated ${per.toFixed(1)}/min, planned 300`);
 }
-console.log('manifold trunk ok');
+console.log('all checks passed');
+
+// autoplanner: several distinct ways, the recommended one mines the fewest kinds, and a factory limited to its
+// recipes makes the product with exactly those resources
+{
+  const s: Settings = { ...base, alts: recipes.filter((r) => r.alt).map((r) => r.id) };
+  const list = await autoplan('Desc_ModularFrameHeavy_C', 10, s);
+  assert.ok(list.length >= 3, `${list.length} options`);
+  assert.ok(list[0].tags.includes('Recommended'));
+  assert.equal(list[0].types, Math.min(...list.map((o) => o.types)));
+  const sol = await solve({ ...s, outputs: [{ item: 'Desc_ModularFrameHeavy_C', rate: 10, maximize: false }], only: list[2].recipes });
+  for (const [id, v] of list[2].raw) near(sol.imports.get(id) ?? 0, v, `limited factory ${id}`);
+  console.log('autoplanner ok');
+}

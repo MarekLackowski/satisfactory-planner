@@ -109,13 +109,15 @@ function placeLabels(layout: Layout, ctx: CanvasRenderingContext2D): Label[] {
 type Props = {
   layout: Layout;
   fitKey: unknown; // view refits when this changes (new plan / direction), not while dragging
+  refit: number; // ... or when this counter goes up (auto-arrange, fullscreen)
+  children?: React.ReactNode; // buttons in the top-right corner
   onMoveNode: (id: string, p: Pt) => void;
   playing: boolean;
   speed: number;
   colorBy: ColorBy;
 };
 
-export default function FactoryCanvas({ layout, fitKey, onMoveNode, playing, speed, colorBy }: Props) {
+export default function FactoryCanvas({ layout, fitKey, refit, onMoveNode, playing, speed, colorBy, children }: Props) {
   const ref = useRef<HTMLCanvasElement>(null);
   const view = useRef({ x: 0, y: 0, k: 1 });
   const time = useRef(0);
@@ -139,7 +141,7 @@ export default function FactoryCanvas({ layout, fitKey, onMoveNode, playing, spe
     const k = Math.min(c.clientWidth / l.w, c.clientHeight / l.h, 1.5);
     view.current = { k, x: (c.clientWidth - l.w * k) / 2 - l.x * k, y: (c.clientHeight - l.h * k) / 2 - l.y * k };
   };
-  useEffect(fit, [fitKey]); // eslint-disable-line react-hooks/exhaustive-deps
+  useEffect(fit, [fitKey, refit]); // eslint-disable-line react-hooks/exhaustive-deps
 
   useEffect(() => {
     const c = ref.current!;
@@ -507,7 +509,7 @@ export default function FactoryCanvas({ layout, fitKey, onMoveNode, playing, spe
           zoomAt(p.sx, p.sy, Math.exp(-e.deltaY * 0.0015));
         }}
       />
-      <button className="fit" onClick={fit} title="Fit to screen">⤢ Fit</button>
+      <div className="fit">{children}</div>
       {tip && (
         <div className={`tip${tip.wiring ? ' tip-wide' : ''}`} style={tip.style}>
           {tip.lines.map((l, i) => (

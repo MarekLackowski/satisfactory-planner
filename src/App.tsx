@@ -1,11 +1,12 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import FactoriesPanel from './Factories';
 import { loadFactories, newFactory, saveFactories, type Factories, type Factory } from './storage';
 import FactoryCanvas from './FactoryCanvas';
-import TierList, { TierBadge } from './TierList';
 import WiringDiagram from './WiringDiagram';
+import { Icon, ItemSelect } from './ui';
+import Autoplanner from './Autoplanner';
 import {
-  POWER, unit, TIER_COLORS, TIERS, type ColorBy, belts, buildings, extractors, fmt, icon, itemIcon, items, nameOf, pipes, producible, rawItems, recipes, WATER_PUMP, type Purity,
+  POWER, unit, TIER_COLORS, type ColorBy, belts, buildings, extractors, fmt, icon, itemIcon, items, nameOf, pipes, producible, rawItems, recipes, WATER_PUMP, type Purity,
 } from './game';
 import { autoArrange, geometry, type Dir, type Pt } from './layout';
 import { solvePlan, type Plan } from './plan';
@@ -44,65 +45,6 @@ function load(): Settings {
   }
 }
 
-const Icon = ({ src, size = 22 }: { src: string; size?: number }) => (
-  <img src={src} width={size} height={size} alt="" className="icon" onError={(e) => (e.currentTarget.style.visibility = 'hidden')} />
-);
-
-/** scroll only the picker list (scrollIntoView would also scroll the side panel and make the UI jump) */
-function keepVisible(el: HTMLElement | null) {
-  const list = el?.parentElement;
-  if (!el || !list) return;
-  if (el.offsetTop < list.scrollTop) list.scrollTop = el.offsetTop;
-  else if (el.offsetTop + el.offsetHeight > list.scrollTop + list.clientHeight) list.scrollTop = el.offsetTop + el.offsetHeight - list.clientHeight;
-}
-
-/** searchable item picker: type to filter, arrows + Enter to pick, Esc to close */
-function ItemSelect({ value, options, onChange }: { value: string; options: string[]; onChange: (v: string) => void }) {
-  const [open, setOpen] = useState(false);
-  const [q, setQ] = useState('');
-  const [hi, setHi] = useState(0);
-  const shown = options.filter((id) => nameOf(id).toLowerCase().includes(q.trim().toLowerCase()));
-  const close = () => { setOpen(false); setQ(''); setHi(0); };
-  const pick = (id: string) => { onChange(id); close(); };
-  const locked = !options.includes(value);
-  return (
-    <span className="item-select picker">
-      <button type="button" className="picker-btn" aria-haspopup="listbox" aria-expanded={open} onClick={() => (open ? close() : setOpen(true))}>
-        <Icon src={itemIcon(value)} />
-        <span>{nameOf(value)}{locked && ' (locked)'}</span>
-        <span className="caret" aria-hidden>▾</span>
-      </button>
-      {open && (
-        <>
-          <div className="picker-backdrop" onClick={close} />
-          <div className="picker-pop">
-            <input
-              type="search" ref={(el) => el?.focus({ preventScroll: true })} placeholder={`Search ${options.length} items…`} value={q} aria-label="Search items"
-              onChange={(e) => { setQ(e.target.value); setHi(0); }}
-              onKeyDown={(e) => {
-                if (e.key === 'ArrowDown') { e.preventDefault(); setHi((h) => Math.min(h + 1, shown.length - 1)); }
-                else if (e.key === 'ArrowUp') { e.preventDefault(); setHi((h) => Math.max(h - 1, 0)); }
-                else if (e.key === 'Enter' && shown[hi]) pick(shown[hi]);
-                else if (e.key === 'Escape') close();
-              }}
-            />
-            <ul role="listbox">
-              {shown.map((id, i) => (
-                <li key={id} role="option" aria-selected={id === value} className={`${i === hi ? 'hi' : ''} ${id === value ? 'sel' : ''}`}
-                  onMouseEnter={() => setHi(i)} onClick={() => pick(id)}
-                  ref={i === hi ? (el) => keepVisible(el) : undefined}>
-                  <Icon src={itemIcon(id)} size={24} />{nameOf(id)}
-                </li>
-              ))}
-              {!shown.length && <li className="empty-row">No match</li>}
-            </ul>
-          </div>
-        </>
-      )}
-    </span>
-  );
-}
-
 const toggle = <T,>(list: T[], v: T, on: boolean) => (on ? [...new Set([...list, v])] : list.filter((x) => x !== v));
 
 export default function App() {
@@ -111,22 +53,11 @@ export default function App() {
     const s0 = load();
     const f0 = loadFactories({ outputs: s0.outputs, inputs: s0.inputs });
     const a = f0.list.find((x) => x.id === f0.active);
-    return { s: { ...s0, outputs: a?.outputs ?? [], inputs: a?.inputs ?? [], powerBudget: a?.powerBudget, selfPowered: a?.selfPowered, overclock: a?.overclock ?? 1, shards: a?.shards ?? 0 }, f: f0 };
+    return { s: { ...s0, outputs: a?.outputs ?? [], inputs: a?.inputs ?? [], powerBudget: a?.powerBudget, selfPowered: a?.selfPowered, overclock: a?.overclock ?? 1, shards: a?.shards ?? 0, only: a?.only }, f: f0 };
   });
   const [s, setS] = useState<Settings>(init.s);
   const set = (patch: Partial<Settings>) => setS((p) => ({ ...p, ...patch }));
   const [tab, setTab] = useState<'factories' | 'production' | 'unlocks'>('production');
-  // the tier list is a separate full page (#tiers), not a sidebar tab
-  const [page, setPage] = useState(() => (location.hash === '#tiers' ? 'tiers' : 'planner'));
-  useEffect(() => {
-    const sync = () => setPage(location.hash === '#tiers' ? 'tiers' : 'planner');
-    addEventListener('hashchange', sync);
-    return () => removeEventListener('hashchange', sync);
-  }, []);
-  const goTo = (p: 'tiers' | 'planner') => {
-    location.hash = p === 'tiers' ? 'tiers' : '';
-    setPage(p);
-  };
   const [fac, setFac] = useState<Factories>(init.f);
   const [naming, setNaming] = useState('');
   const active = fac.list.find((x) => x.id === fac.active); // undefined once every factory is deleted
@@ -146,6 +77,30 @@ export default function App() {
   const view = !active && tab === 'production' ? 'factories' : tab; // nothing to edit without a factory
   const [dir, setDir] = useState<Dir>(active?.dir ?? 'TB');
   const [moved, setMoved] = useState<Record<string, Pt>>(active?.moved ?? {});
+  const [refit, setRefit] = useState(0);
+  // fullscreen graph: only the canvas and the summary bar (which can be hidden)
+  const [full, setFull] = useState(false);
+  const [hideSummary, setHideSummary] = useState(false);
+  const mainRef = useRef<HTMLElement>(null);
+  useEffect(() => {
+    const sync = () => {
+      if (!document.fullscreenElement) setFull(false);
+      setTimeout(() => setRefit((n) => n + 1), 50); // canvas size changed
+    };
+    document.addEventListener('fullscreenchange', sync);
+    return () => document.removeEventListener('fullscreenchange', sync);
+  }, []);
+  const toggleFull = () => {
+    if (full) {
+      if (document.fullscreenElement) document.exitFullscreen().catch(() => {});
+      setFull(false);
+    } else {
+      setFull(true);
+      // the CSS overlay alone already works where the Fullscreen API doesn't (iPhone)
+      mainRef.current?.requestFullscreen?.().catch(() => {});
+    }
+    setTimeout(() => setRefit((n) => n + 1), 50);
+  };
   const changeDir = (d: Dir) => {
     setDir(d);
     setMoved({});
@@ -154,20 +109,20 @@ export default function App() {
   // ---- factories: the active one is the live editor state (autosaved); unlocks/options live in `s` and are shared
   const current = useMemo<Factories>(() => ({
     ...fac,
-    list: fac.list.map((x) => (x.id === fac.active ? { ...x, outputs: s.outputs, inputs: s.inputs, powerBudget: s.powerBudget, selfPowered: s.selfPowered, overclock: s.overclock, shards: s.shards, dir, moved } : x)),
-  }), [fac, s.outputs, s.inputs, s.powerBudget, s.selfPowered, s.overclock, s.shards, dir, moved]);
+    list: fac.list.map((x) => (x.id === fac.active ? { ...x, outputs: s.outputs, inputs: s.inputs, powerBudget: s.powerBudget, selfPowered: s.selfPowered, overclock: s.overclock, shards: s.shards, only: s.only, dir, moved } : x)),
+  }), [fac, s.outputs, s.inputs, s.powerBudget, s.selfPowered, s.overclock, s.shards, s.only, dir, moved]);
   useEffect(() => saveFactories(current), [current]);
   const patchActive = (patch: Partial<Factory>) =>
     setFac((f) => ({ ...f, list: f.list.map((x) => (x.id === f.active ? { ...x, ...patch, updated: Date.now() } : x)) }));
   const open = (x: Factory) => {
     setFac({ list: current.list, active: x.id });
-    setS((p) => ({ ...p, outputs: x.outputs, inputs: x.inputs, powerBudget: x.powerBudget, selfPowered: x.selfPowered, overclock: x.overclock ?? 1, shards: x.shards ?? 0 }));
+    setS((p) => ({ ...p, outputs: x.outputs, inputs: x.inputs, powerBudget: x.powerBudget, selfPowered: x.selfPowered, overclock: x.overclock ?? 1, shards: x.shards ?? 0, only: x.only }));
     setDir(x.dir);
     setMoved(x.moved);
   };
   const addFactory = (x: Factory) => {
     setFac({ list: [...current.list, x], active: x.id });
-    setS((p) => ({ ...p, outputs: x.outputs, inputs: x.inputs, powerBudget: x.powerBudget, selfPowered: x.selfPowered, overclock: x.overclock ?? 1, shards: x.shards ?? 0 }));
+    setS((p) => ({ ...p, outputs: x.outputs, inputs: x.inputs, powerBudget: x.powerBudget, selfPowered: x.selfPowered, overclock: x.overclock ?? 1, shards: x.shards ?? 0, only: x.only }));
     setDir(x.dir);
     setMoved(x.moved);
     setTab('factories');
@@ -177,7 +132,7 @@ export default function App() {
     const rest = current.list.filter((x) => x.id !== id);
     if (!rest.length) {
       setFac({ list: [], active: '' });
-      setS((p) => ({ ...p, outputs: [], inputs: [] }));
+      setS((p) => ({ ...p, outputs: [], inputs: [], only: undefined }));
       setMoved({});
       return setTab('factories');
     }
@@ -220,22 +175,16 @@ export default function App() {
   const enabledExtractors = Object.values(extractors).filter((e) => s.buildings.includes(e.id));
   // only items the unlocked recipes/buildings can make
   const makeable = useMemo(() => {
-    const out = new Set(enabledRecipes(s).flatMap((r) => r.outputs.map((o) => o.item)));
+    const out = new Set(enabledRecipes({ ...s, only: undefined }).flatMap((r) => r.outputs.map((o) => o.item)));
     return producible.filter((i) => out.has(i));
   }, [s.buildings, s.alts]); // eslint-disable-line react-hooks/exhaustive-deps
   const alts = recipes.filter((r) => r.alt && (r.name + nameOf(r.outputs[0].item)).toLowerCase().includes(altQuery.toLowerCase()));
 
-  if (page === 'tiers') return <TierList alts={s.alts} onBack={() => goTo('planner')} />;
   return (
-    <div className="app">
+    <div className={`app${full ? ' full' : ''}`}>
       <aside>
         <header>
-          <div className="title-row">
-            <h1>Satisfactory Factory Planner</h1>
-            <button className="tier-link" onClick={() => goTo('tiers')} title="Alternate recipe tier list">
-              <span className="tier-badge" style={{ background: TIERS.S.color }}>S</span> Tier list
-            </button>
-          </div>
+          <h1>Satisfactory Factory Planner</h1>
           {active && (
             <button className="current-factory" onClick={() => setTab('factories')} title="Manage factories">
               <Icon src={icon(active.icon)} size={20} /> {active.name || 'Untitled'}
@@ -255,7 +204,13 @@ export default function App() {
               const src = current.list.find((x) => x.id === id)!;
               addFactory({ ...structuredClone(src), id: newFactory('').id, name: `${src.name} (copy)`, updated: Date.now() });
             }}
-            onDelete={removeFactory} />
+            onDelete={removeFactory}>
+            <Autoplanner s={s} options={makeable} onPick={(item, rate, o) => {
+              addFactory(newFactory(nameOf(item), { icon: nameOf(item), outputs: [{ item, rate, maximize: false }], only: o.recipes, dir }));
+              setNaming('');
+              setTab('production');
+            }} />
+          </FactoriesPanel>
         ) : view === 'production' ? (
           <div className="panel">
             <section>
@@ -280,6 +235,12 @@ export default function App() {
                 onClick={() => set({ outputs: [...s.outputs, { item: makeable[0], rate: 10, maximize: false }] })}>+ Add output</button>
             </section>
 
+            {s.only && (
+              <div className="locked-recipes">
+                <span>Uses the {s.only.length} recipes picked in the autoplanner.</span>
+                <button onClick={() => set({ only: undefined })} title="Let the optimizer use every unlocked recipe again">Use all unlocked</button>
+              </div>
+            )}
             <section>
               <h2>Power</h2>
               <div className="seg" role="radiogroup" aria-label="Power source">
@@ -447,7 +408,6 @@ export default function App() {
                 {alts.map((r) => (
                   <label key={r.id} className="alt">
                     <input type="checkbox" checked={s.alts.includes(r.id)} onChange={(e) => set({ alts: toggle(s.alts, r.id, e.target.checked) })} />
-                    <TierBadge id={r.id} size={20} />
                     <Icon src={itemIcon(r.outputs[0].item)} />
                     <span>
                       <b>{r.name}</b>
@@ -463,7 +423,7 @@ export default function App() {
         )}
         <footer>
           <div className="row">
-            <button onClick={() => { if (confirm('Reset unlocks and options? Factories are kept.')) setS((p) => ({ ...DEFAULTS, outputs: p.outputs, inputs: p.inputs, powerBudget: p.powerBudget, selfPowered: p.selfPowered, overclock: p.overclock, shards: p.shards })); }}>Reset unlocks & options</button>
+            <button onClick={() => { if (confirm('Reset unlocks and options? Factories are kept.')) setS((p) => ({ ...DEFAULTS, outputs: p.outputs, inputs: p.inputs, powerBudget: p.powerBudget, selfPowered: p.selfPowered, overclock: p.overclock, shards: p.shards, only: p.only })); }}>Reset unlocks & options</button>
             <a className="kofi" href="https://ko-fi.com/mareklackowski" target="_blank" rel="noopener noreferrer">☕ Buy me a coffee</a>
           </div>
           <p className="legal">
@@ -474,7 +434,7 @@ export default function App() {
         </footer>
       </aside>
 
-      <main>
+      <main ref={mainRef}>
         {!active ? (
           <div className="empty">
             <img src={icon('Constructor')} width={96} height={96} alt="" />
@@ -506,16 +466,19 @@ export default function App() {
             <button className={dir === 'TB' ? 'on' : ''} onClick={() => changeDir('TB')}>↓ Vertical</button>
             <button className={dir === 'LR' ? 'on' : ''} onClick={() => changeDir('LR')}>→ Horizontal</button>
           </span>
-          <button disabled={!Object.keys(moved).length} onClick={() => setMoved({})} title="Discard manual moves">Auto-arrange</button>
+          <button onClick={() => { setMoved({}); setRefit((n) => n + 1); }} title="Discard manual moves and fit the factory to the screen">Auto-arrange</button>
           {busy && <span className="busy">Solving…</span>}
         </div>
         {result && 'error' in result && <div className="error">{result.error}</div>}
         {lay && (
-          <FactoryCanvas layout={lay} fitKey={arranged} playing={playing} speed={speed} colorBy={colorBy}
-            onMoveNode={(id, p) => setMoved((m) => ({ ...m, [id]: p }))} />
+          <FactoryCanvas layout={lay} fitKey={arranged} refit={refit} playing={playing} speed={speed} colorBy={colorBy}
+            onMoveNode={(id, p) => setMoved((m) => ({ ...m, [id]: p }))}>
+            {full && plan && <button onClick={() => setHideSummary(!hideSummary)}>{hideSummary ? '▴ Show summary' : '▾ Hide summary'}</button>}
+            <button onClick={toggleFull} title={full ? 'Back to the planner (Esc)' : 'Show the factory on the whole screen'}>{full ? '✕ Exit fullscreen' : '⛶ Fullscreen'}</button>
+          </FactoryCanvas>
         )}
         {result && 'info' in result && <div className="info">{result.info}</div>}
-        {plan && <Summary plan={plan} budget={s.selfPowered ? undefined : s.powerBudget} selfPowered={s.selfPowered} />}
+        {plan && !(full && hideSummary) && <Summary plan={plan} budget={s.selfPowered ? undefined : s.powerBudget} selfPowered={s.selfPowered} />}
         </>)}
       </main>
     </div>

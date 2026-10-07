@@ -96,7 +96,11 @@ main { display: flex; flex-direction: column; min-width: 0; min-height: 0; }
 .canvas-wrap { position: relative; flex: 1; min-height: 300px; }
 .canvas-wrap canvas { position: absolute; inset: 0; width: 100%; height: 100%; cursor: grab; touch-action: none; }
 .canvas-wrap canvas:active { cursor: grabbing; }
-.fit { position: absolute; right: 12px; top: 12px; }
+.fit { position: absolute; right: 12px; top: 12px; display: flex; gap: 6px; }
+.app.full { grid-template-columns: 1fr; }
+.app.full aside, .app.full .toolbar { display: none; }
+.app.full main { position: fixed; inset: 0; z-index: 50; height: auto; background: var(--bg); }
+main:fullscreen { background: var(--bg); }
 .tip {
   position: absolute; pointer-events: none; background: var(--panel); border: 1px solid var(--line); border-radius: 6px;
   padding: 6px 10px; font-size: 12px; box-shadow: 0 4px 16px rgba(0, 0, 0, 0.2); max-width: 320px; z-index: 2;
@@ -208,40 +212,17 @@ input:disabled { opacity: 0.45; cursor: not-allowed; }
 .miner .unit { min-width: 70px; }
 .row button.primary { margin-top: 0; }
 .warn-inline { flex-basis: 100%; font-size: 12px; color: var(--accent); }
-/* ---- alternate recipe tier list (own page) */
-.title-row { display: flex; align-items: center; gap: 8px; margin-bottom: 10px; }
-.title-row h1 { margin: 0; flex: 1; }
-.tier-link { display: inline-flex; align-items: center; gap: 6px; padding: 3px 8px 3px 4px; font-size: 13px; white-space: nowrap; }
-.tier-badge { flex: none; display: inline-flex; align-items: center; justify-content: center; width: 20px; height: 20px; border-radius: 5px; font-weight: 800; font-size: 12px; color: #1d1f24; line-height: 1; }
-.tier-page { height: 100%; display: flex; flex-direction: column; background: var(--bg); }
-.tier-head { display: flex; flex-wrap: wrap; align-items: center; gap: 10px; padding: 8px 12px; background: var(--panel); border-bottom: 1px solid var(--line); }
-.tier-head h1 { margin: 0; font-size: 16px; }
-.tier-head input[type='search'] { flex: 0 1 240px; }
-.tier-key { display: inline-flex; align-items: center; gap: 4px; font-size: 12px; color: var(--muted); margin-left: auto; cursor: help; }
-.tier-key img { width: 16px; height: 16px; }
-.tier-rows { flex: 1; min-height: 0; overflow: auto; padding: 6px 10px; display: flex; flex-direction: column; gap: 4px; }
-.tier-row { display: flex; border-radius: 6px; background: var(--panel); border: 1px solid var(--line); }
-.tier-letter { flex: none; width: 40px; display: flex; align-items: center; justify-content: center; font-size: 20px; font-weight: 800; color: #1d1f24; border-radius: 5px 0 0 5px; }
-.tier-tiles { flex: 1; min-width: 0; display: flex; flex-wrap: wrap; gap: 3px; padding: 3px; align-items: center; }
-.tile2 { position: relative; display: inline-flex; align-items: center; gap: 1px; padding: 2px 3px; border-radius: 5px; background: var(--node); border: 1px solid var(--line); cursor: default; }
-.tile2.owned { border-color: var(--accent); background: color-mix(in srgb, var(--accent) 14%, var(--node)); }
-.tile2 .check { position: absolute; top: -5px; right: -5px; width: 13px; height: 13px; border-radius: 50%; background: var(--accent); color: #fff; font-size: 9px; font-weight: 800; display: flex; align-items: center; justify-content: center; }
-.slot { position: relative; width: 26px; height: 26px; display: inline-flex; }
-.slot img { width: 26px; height: 26px; object-fit: contain; }
-.slot b { position: absolute; right: -1px; bottom: -2px; font-size: 9px; line-height: 1; padding: 1px 2px; border-radius: 3px; background: rgba(20, 22, 26, 0.85); color: #fff; }
-.tile2 .arrow { font-size: 8px; color: var(--muted); margin: 0 2px; }
-.tile2 .pop { display: none; position: absolute; z-index: 20; left: 0; top: calc(100% + 4px); min-width: 210px; padding: 6px 8px; border-radius: 6px; background: var(--panel); border: 1px solid var(--line); box-shadow: 0 6px 18px rgba(0, 0, 0, 0.35); flex-direction: column; gap: 3px; font-size: 12px; white-space: nowrap; }
-.tile2:hover .pop, .tile2:focus .pop { display: flex; }
-.pop-building { display: inline-flex; align-items: center; gap: 4px; color: var(--muted); font-size: 11px; }
-.pop-building img { width: 16px; height: 16px; }
-.deltas { display: flex; gap: 6px; }
-.delta { display: inline-flex; align-items: center; gap: 2px; font-weight: 600; }
-.delta img { width: 14px; height: 14px; }
-.delta.good { color: #3fa66a; }
-.delta.bad { color: #e5484d; }
-.raws { display: inline-flex; align-items: center; gap: 2px; } .raws img { width: 18px; height: 18px; } .raws .arrow { font-size: 8px; color: var(--muted); margin: 0 3px; }
-.votes { display: flex; flex-wrap: wrap; gap: 3px 8px; font-size: 11px; color: var(--muted); }
-.vote { display: inline-flex; align-items: center; gap: 3px; }
-.vote .tier-badge { width: 15px; height: 15px; font-size: 9px; border-radius: 3px; }
-.tier-key a { color: inherit; }
-.tier-key a + a::before { content: '· '; }
+.locked-recipes { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; margin: 8px 0; padding: 6px 8px; border-radius: 6px; background: color-mix(in srgb, var(--accent) 12%, var(--panel)); font-size: 13px; }
+.locked-recipes span { flex: 1; }
+.way { margin-top: 10px; padding: 8px; border: 1px solid var(--line); border-radius: 6px; background: var(--node); display: flex; flex-direction: column; gap: 6px; }
+.way > button { align-self: flex-start; }
+.way-tags { display: flex; flex-wrap: wrap; gap: 4px; }
+.way-tags span { font-size: 11px; font-weight: 600; padding: 1px 6px; border-radius: 10px; background: color-mix(in srgb, var(--accent) 22%, transparent); color: var(--accent); }
+.way-tags span.dim { background: none; color: var(--muted); padding-left: 0; }
+.way-raw { display: flex; flex-wrap: wrap; gap: 4px 10px; font-size: 13px; font-weight: 600; }
+.way-raw span { display: inline-flex; align-items: center; gap: 3px; }
+.way-raw span.dim { opacity: 0.55; }
+.way-stats { font-size: 12px; color: var(--muted); }
+.way-stats b { color: var(--text); }
+.way-alts { display: flex; flex-wrap: wrap; gap: 3px 10px; font-size: 11px; color: var(--muted); }
+.way-alts span { display: inline-flex; align-items: center; gap: 3px; }

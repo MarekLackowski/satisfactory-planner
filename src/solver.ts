@@ -25,6 +25,7 @@ export type Settings = {
   selfPowered?: boolean; // build power plants in this factory for its own consumption
   extraPower?: number; // internal: MW drawn by things outside the LP (sink), added when self-powered
   exclude?: string[]; // internal: recipe ids left out (trace amounts dropped by solveClean)
+  only?: string[]; // recipes this factory is limited to (chosen in the autoplanner); power plants stay free
 };
 
 export type Solution = {
@@ -71,7 +72,8 @@ export const enabledRecipes = (s: Settings) => {
   const on = new Set(s.buildings);
   const alts = new Set(s.alts);
   const out = new Set(s.exclude ?? []);
-  return recipes.filter((r) => on.has(r.building) && (!r.alt || alts.has(r.id)) && !out.has(r.id));
+  const only = s.only && new Set(s.only);
+  return recipes.filter((r) => on.has(r.building) && (!r.alt || alts.has(r.id)) && !out.has(r.id) && (!only || only.has(r.id) || buildings[r.building]?.generates));
 };
 
 const recipePower = (r: Recipe) => r.power ?? buildings[r.building].power;

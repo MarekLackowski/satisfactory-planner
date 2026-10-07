@@ -12,6 +12,7 @@ export type Factory = {
   selfPowered?: boolean; // builds its own power plants
   overclock?: number; // max clock for production machines (1..2.5)
   shards?: number; // power shards set aside for this factory's machines
+  only?: string[]; // recipes picked in the autoplanner
   dir: Dir;
   moved: Record<string, Pt>;
   updated: number;
