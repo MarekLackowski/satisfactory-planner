@@ -242,7 +242,7 @@ export default function App() {
               onPickMade={(inputs, m) => {
                 // the resources become the factory's inputs, making as much as they allow
                 const rate = Math.floor(m.rate * 100) / 100;
-                addFactory(newFactory(nameOf(m.item), { icon: nameOf(m.item), outputs: [{ item: m.item, rate, maximize: false }], inputs: inputs.map((i) => ({ kind: 'rate', ...i })), only: m.recipes, dir }));
+                addFactory(newFactory(nameOf(m.item), { icon: nameOf(m.item), outputs: [{ item: m.item, rate, maximize: false }], inputs: inputs.map((i) => ({ kind: 'rate', ...i })), only: m.recipes, selfPowered: m.item === POWER, dir }));
                 setNaming('');
                 setTab('production');
               }} />

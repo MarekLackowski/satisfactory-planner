@@ -113,7 +113,8 @@ export async function fromResources(inputs: { item: string; rate: number }[], s:
       }
     }
   }
-  const candidates = [...have].filter((id) => id !== WATER && id !== POWER && !inputs.some((i) => i.item === id) && !items[id].raw);
+  // power counts too: what the resources can fuel
+  const candidates = [...have].filter((id) => id !== WATER && !inputs.some((i) => i.item === id) && (id === POWER || !items[id].raw));
   const base: Settings = {
     ...s, inputs: inputs.map((i) => ({ kind: 'rate' as const, ...i })), unlimitedRaw: false, unlimitedWater: true,
     powerBudget: undefined, selfPowered: false, extraPower: undefined, exclude: undefined, only: undefined,
@@ -123,7 +124,8 @@ export async function fromResources(inputs: { item: string; rate: number }[], s:
     progress?.(k, candidates.length);
     try {
       const outputs: Output[] = [{ item, rate: 1, maximize: true }];
-      const sol = await solveClean({ ...base, outputs });
+      // power: net of what the refineries etc. on the way use themselves
+      const sol = await solveClean({ ...base, outputs, selfPowered: item === POWER });
       const rate = sol.produced.get(item) ?? 0;
       if (rate < 0.01) continue;
       made.push({
@@ -135,5 +137,6 @@ export async function fromResources(inputs: { item: string; rate: number }[], s:
       // not makeable from these alone
     }
   }
-  return made.sort((a, b) => b.uses.length - a.uses.length || items[b.item].sink - items[a.item].sink);
+  // power on top (a different kind of answer), then by inputs used and how advanced the product is
+  return made.sort((a, b) => +(b.item === POWER) - +(a.item === POWER) || b.uses.length - a.uses.length || items[b.item].sink - items[a.item].sink);
 }

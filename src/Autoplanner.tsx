@@ -1,6 +1,6 @@
 import { useState } from 'react';
 import { autoplan, fromResources, type Made, type Option } from './autoplan';
-import { fmt, itemIcon, nameOf, recipeById, unit, WATER } from './game';
+import { fmt, itemIcon, nameOf, POWER, recipeById, unit, WATER } from './game';
 import type { Settings } from './solver';
 import { Icon, ItemSelect } from './ui';
 
@@ -109,7 +109,7 @@ export default function Autoplanner({ s, options, inputItems, onPick, onPickMade
                   <Icon src={itemIcon(m.item)} size={28} />
                   <span>
                     <b>{nameOf(m.item)}</b>
-                    <small>up to {fmt(m.rate, 1)} {unit(m.item)}</small>
+                    <small>up to {fmt(m.rate, 1)} {unit(m.item)}{m.item === POWER ? ' to spare, after its own machines' : ''}</small>
                   </span>
                   <span className="made-uses" title="Resources it uses">
                     {m.uses.map((id) => <Icon key={id} src={itemIcon(id)} size={18} />)}

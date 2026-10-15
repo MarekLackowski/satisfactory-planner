@@ -365,3 +365,18 @@ console.log('all checks passed');
   assert.ok(Math.abs(per - (130.7 + 297 + 118.8 + 59.4)) < 30, `simulated ${per.toFixed(1)}/min out`);
   console.log('bus ok');
 }
+
+// resources can also become power: 120 coal/min fuels 8 coal generators, listed first, net of their water pumps;
+// oil's refineries take their share first (net)
+{
+  const coal = await fromResources([{ item: 'Desc_Coal_C', rate: 120 }], base);
+  assert.equal(coal[0].item, 'MW');
+  near(coal[0].rate, 540, 'MW from 120 coal'); // 600 MW minus 3 water extractors for the generators
+  const oil = await fromResources([{ item: 'Desc_LiquidOil_C', rate: 120 }], base);
+  const mw = oil.find((x) => x.item === 'MW')!;
+  assert.ok(mw && mw.rate < 1000, `net power from oil ${mw?.rate}`);
+  const s: Settings = { ...base, selfPowered: true, inputs: [{ kind: 'rate', item: 'Desc_LiquidOil_C', rate: 120 }], unlimitedRaw: false, only: mw.recipes, outputs: [{ item: 'MW', rate: Math.floor(mw.rate * 100) / 100, maximize: false }] };
+  const p = await solvePlan(s);
+  assert.ok(!p.warnings.length, p.warnings.join(' | '));
+  console.log('power from resources ok', mw.rate.toFixed(0), 'MW from oil');
+}
