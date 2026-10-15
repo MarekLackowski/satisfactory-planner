@@ -1,6 +1,6 @@
-import { importWeight, recipeById, recipes, WATER } from './game';
+import { importWeight, items, POWER, recipeById, recipes, WATER } from './game';
 import { buildPlan } from './plan';
-import { solveClean, type Settings } from './solver';
+import { enabledRecipes, solveClean, type Output, type Settings } from './solver';
 
 export type Option = {
   recipes: string[]; // every recipe the plan uses: the new factory is limited to these
@@ -22,13 +22,13 @@ const GOALS: Settings['weights'][] = [
 ];
 
 /**
- * A few different ways to make `rate`/min of `item` with the unlocked recipes: the optimizer's pick for each goal,
+ * A few different ways to make the `targets` with the unlocked recipes: the optimizer's pick for each goal,
  * then the same with one or two raw resources banned (which is what finds plans that mine fewer kinds of resources).
  * Ranked by scarcity-weighted resources, each extra resource type counting +50%.
  */
-export async function autoplan(item: string, rate: number, s: Settings, count = 5): Promise<Option[]> {
+export async function autoplan(targets: { item: string; rate: number }[], s: Settings, count = 5): Promise<Option[]> {
   const base: Settings = {
-    ...s, outputs: [{ item, rate, maximize: false }], inputs: [], unlimitedRaw: true, unlimitedWater: true,
+    ...s, outputs: targets.map((t) => ({ ...t, maximize: false })), inputs: [], unlimitedRaw: true, unlimitedWater: true,
     powerBudget: undefined, selfPowered: false, extraPower: undefined, exclude: undefined, only: undefined,
   };
   const found = new Map<string, Option>();
@@ -42,7 +42,7 @@ export async function autoplan(item: string, rate: number, s: Settings, count = 
     const st = { ...base, weights, exclude };
     try {
       const sol = await solveClean(st);
-      if ((sol.produced.get(item) ?? 0) < rate * 0.99) return;
+      if (targets.some((t) => (sol.produced.get(t.item) ?? 0) < t.rate * 0.99)) return;
       const used = [...sol.rates].filter(([, x]) => x > 1e-6).map(([id]) => id).sort();
       if (found.has(used.join())) return;
       const raw = [...sol.imports].filter(([, v]) => v > 1e-6).sort((a, b) => b[1] - a[1]);
@@ -71,7 +71,7 @@ export async function autoplan(item: string, rate: number, s: Settings, count = 
       const banned = bannedFor.get(o)!;
       if (banned.length !== depth) continue;
       // ponytail: capped at 30 solves, plenty to show a handful of options for one product
-      for (const [id] of o.raw) if (id !== WATER && id !== item && tried.size < 30) await run(GOALS[0], [...banned, id]);
+      for (const [id] of o.raw) if (id !== WATER && !targets.some((t) => t.item === id) && tried.size < 30) await run(GOALS[0], [...banned, id]);
     }
   }
   // the same resources in about the same amounts is the same option to the player: keep the better one
@@ -93,3 +93,47 @@ export async function autoplan(item: string, rate: number, s: Settings, count = 
   return [...all.filter((o) => o.tags.length), ...all.filter((o) => !o.tags.length)].slice(0, count);
 }
 
+
+export type Made = { item: string; rate: number; uses: string[]; recipes: string[] };
+
+/**
+ * everything the given inputs (plus water) can be turned into with the unlocked recipes, each at the most it can
+ * make on its own; the ones using more of the inputs first, then the most advanced (by AWESOME Sink value)
+ */
+export async function fromResources(inputs: { item: string; rate: number }[], s: Settings, progress?: (done: number, total: number) => void): Promise<Made[]> {
+  const usable = enabledRecipes({ ...s, only: undefined });
+  const have = new Set([...inputs.map((i) => i.item), WATER]);
+  // which items are reachable at all: grow the set until no recipe adds anything
+  for (let grew = true; grew;) {
+    grew = false;
+    for (const r of usable) {
+      if (r.inputs.every((f) => have.has(f.item))) for (const o of r.outputs) if (!have.has(o.item)) {
+        have.add(o.item);
+        grew = true;
+      }
+    }
+  }
+  const candidates = [...have].filter((id) => id !== WATER && id !== POWER && !inputs.some((i) => i.item === id) && !items[id].raw);
+  const base: Settings = {
+    ...s, inputs: inputs.map((i) => ({ kind: 'rate' as const, ...i })), unlimitedRaw: false, unlimitedWater: true,
+    powerBudget: undefined, selfPowered: false, extraPower: undefined, exclude: undefined, only: undefined,
+  };
+  const made: Made[] = [];
+  for (const [k, item] of candidates.entries()) {
+    progress?.(k, candidates.length);
+    try {
+      const outputs: Output[] = [{ item, rate: 1, maximize: true }];
+      const sol = await solveClean({ ...base, outputs });
+      const rate = sol.produced.get(item) ?? 0;
+      if (rate < 0.01) continue;
+      made.push({
+        item, rate,
+        uses: inputs.map((i) => i.item).filter((id) => (sol.imports.get(id) ?? 0) > 1e-6),
+        recipes: [...sol.rates].filter(([, x]) => x > 1e-6).map(([id]) => id),
+      });
+    } catch {
+      // not makeable from these alone
+    }
+  }
+  return made.sort((a, b) => b.uses.length - a.uses.length || items[b.item].sink - items[a.item].sink);
+}

@@ -17,6 +17,7 @@ export type Wiring = {
   splitters: number; // pipeline junctions when fluid
   mergers: number;
   fluid: boolean;
+  bus?: boolean; // output: all lines merged onto one belt that splits off to each consumer where its belt leaves
 };
 
 // LP results carry ~1e-4/min noise; anything below 0.01/min is the same amount in game

@@ -1,11 +1,11 @@
-import { fmt, icon } from './game';
+import { fmt, icon, itemIcon } from './game';
 import { splitKind, type Wiring } from './wiring';
 
-const ROW = 50; // one belt per row
-const BOX = 172; // source / destination box width
-const W = 580;
-const SPLIT_X = 212; // splitter column
-const MERGE_X = 366; // merger column
+const ROW = 58; // one belt per row
+const BOX = 184; // source / destination box width
+const W = 620;
+const SPLIT_X = 228; // splitter column
+const MERGE_X = 392; // merger column
 const DST_X = W - BOX;
 const TOP = 26;
 
@@ -17,6 +17,7 @@ const hit = (a: Rect, b: Rect) => a.x < b.x + b.w && a.x + a.w > b.x && a.y < b.
 /** build recipe as a picture: incoming belts/pipes (left) → splitters/manifolds → mergers → where they go (right) */
 export default function WiringDiagram({ w }: { w: Wiring }) {
   const fluid = w.fluid;
+  const item = w.key.slice(w.key.lastIndexOf(':') + 1);
   const per = fluid ? 'm³/min' : '/min';
   const used = w.sources.map((_, i) => w.pieces.filter((p) => p.from === i));
   const srcRows = w.sources.map((s, i) => ({ s, i })).filter(({ i }) => used[i].length);
@@ -41,27 +42,28 @@ export default function WiringDiagram({ w }: { w: Wiring }) {
 
   // three layers: belts below, boxes and blocks above them, labels on top (placed so they don't collide)
   const belts: React.ReactNode[] = [];
+  const movers: React.ReactNode[] = []; // items running along the belts, more of them on busier belts
   const nodes: React.ReactNode[] = [];
   const labels: React.ReactNode[] = [];
   const taken: Rect[] = [];
 
   const box = (x: number, y: number, ico: string, name: string, sub: string, key: string) => {
-    taken.push({ x, y: y - 18, w: BOX, h: 36 });
+    taken.push({ x, y: y - 20, w: BOX, h: 40 });
     nodes.push(
       <g key={key}>
-        <rect x={x} y={y - 18} width={BOX} height={36} rx={6} fill="var(--node)" stroke="var(--line)" />
-        <image href={icon(ico)} x={x + 5} y={y - 12} width={24} height={24} />
-        <text x={x + 34} y={y - 3} fontSize={11} fontWeight={600} fill="var(--text)">{trunc(name, 22)}</text>
-        <text x={x + 34} y={y + 11} fontSize={10.5} fill="var(--muted)">{sub}</text>
+        <rect x={x} y={y - 20} width={BOX} height={40} rx={6} fill="var(--node)" stroke="var(--line)" />
+        <image href={icon(ico)} x={x + 5} y={y - 14} width={28} height={28} />
+        <text x={x + 38} y={y - 3} fontSize={12} fontWeight={600} fill="var(--text)">{trunc(name, 22)}</text>
+        <text x={x + 38} y={y + 12} fontSize={11} fill="var(--muted)">{sub}</text>
       </g>,
     );
   };
   const pill = (cx: number, cy: number, text: string, key: string, color = 'var(--text)') => {
-    const wd = text.length * 5.8 + 8;
+    const wd = text.length * 6.4 + 10;
     labels.push(
       <g key={key}>
-        <rect x={cx - wd / 2} y={cy - 8} width={wd} height={15} rx={3} fill="var(--label-bg)" stroke="var(--line)" strokeWidth={0.5} />
-        <text x={cx} y={cy + 3} fontSize={10} fontWeight={600} textAnchor="middle" fill={color}>{text}</text>
+        <rect x={cx - wd / 2} y={cy - 9} width={wd} height={17} rx={3} fill="var(--label-bg)" stroke="var(--line)" strokeWidth={0.5} />
+        <text x={cx} y={cy + 4} fontSize={11} fontWeight={600} textAnchor="middle" fill={color}>{text}</text>
       </g>,
     );
   };
@@ -84,7 +86,7 @@ export default function WiringDiagram({ w }: { w: Wiring }) {
     }
   };
   /** a belt or pipe: smooth curve between two points, or a straight polyline; at(t) gives a point along it */
-  const draw = (pts: P[], key: string) => {
+  const draw = (pts: P[], key: string, rate: number) => {
     const smooth = pts.length === 2;
     const [x1, y1] = pts[0];
     const [x2, y2] = pts[pts.length - 1];
@@ -94,8 +96,21 @@ export default function WiringDiagram({ w }: { w: Wiring }) {
       <g key={key}>
         <path d={d} fill="none" stroke="var(--belt-edge)" strokeWidth={fluid ? 7 : 6} />
         <path d={d} fill="none" stroke={fluid ? 'var(--pipe)' : 'var(--belt)'} strokeWidth={fluid ? 5 : 4} />
+        <path d={d} fill="none" className="flow" stroke="rgba(255,255,255,0.35)" strokeWidth={fluid ? 2 : 1.5} strokeDasharray="4 10" />
       </g>,
     );
+    // as many items as the belt is busy, moving at one speed so a busy belt looks busy
+    const len = pts.slice(1).reduce((a, p, i) => a + Math.hypot(p[0] - pts[i][0], p[1] - pts[i][1]), 0);
+    const dur = Math.max(1.2, len / 50);
+    const n = Math.max(1, Math.min(8, Math.round((rate / 60) * (len / 60))));
+    for (let i = 0; i < (fluid ? 0 : n); i++) { // pipes show their flow by the moving dashes
+      movers.push(
+        <image key={`${key}-m${i}`} className="mover" href={itemIcon(item)} x={-7} y={-7} width={14} height={14} visibility="hidden">
+          <set attributeName="visibility" to="visible" begin={`${((i * dur) / n).toFixed(2)}s`} />
+          <animateMotion dur={`${dur.toFixed(2)}s`} repeatCount="indefinite" path={d} begin={`${((i * dur) / n).toFixed(2)}s`} />
+        </image>,
+      );
+    }
     return (t: number): { x: number; y: number } => {
       if (smooth) {
         const bz = (a: number, b: number, c: number, e: number) => (1 - t) ** 3 * a + 3 * (1 - t) ** 2 * t * b + 3 * (1 - t) * t ** 2 * c + t ** 3 * e;
@@ -108,11 +123,11 @@ export default function WiringDiagram({ w }: { w: Wiring }) {
   };
   const label = (at: (t: number) => { x: number; y: number }, rate: number, prefer: number[], key: string) => {
     const text = `${fmt(rate)}${per}`;
-    const wd = text.length * 5.8 + 8;
-    const spots = [...prefer, 0.1, 0.9].map(at).map((q) => ({ x: q.x - wd / 2, y: q.y - 8, w: wd, h: 15 }));
+    const wd = text.length * 6.4 + 10;
+    const spots = [...prefer, 0.1, 0.9].map(at).map((q) => ({ x: q.x - wd / 2, y: q.y - 9, w: wd, h: 17 }));
     const r = spots.find((s) => !taken.some((t) => hit(t, s))) ?? spots[0];
     taken.push(r);
-    pill(r.x + wd / 2, r.y + 8, text, key);
+    pill(r.x + wd / 2, r.y + 9, text, key);
   };
 
   for (const { s, i } of srcRows) box(0, ySrc.get(i)!, s.icon, s.label, `${fmt(s.rate)}${per}`, `s${i}`);
@@ -124,7 +139,7 @@ export default function WiringDiagram({ w }: { w: Wiring }) {
     if (r.ins.length < 2) continue;
     const y = yDst.get(`${r.j}#${r.lane}`)!;
     block(MERGE_X, y, 'merger', `m${r.j}-${r.lane}`);
-    draw([[MERGE_X + 13, y], [DST_X, y]], `mb${r.j}-${r.lane}`);
+    draw([[MERGE_X + 13, y], [DST_X, y]], `mb${r.j}-${r.lane}`, r.ins.reduce((a, p) => a + p.rate, 0));
   }
   const kinds: string[] = [];
   srcRows.forEach(({ i }) => {
@@ -133,30 +148,30 @@ export default function WiringDiagram({ w }: { w: Wiring }) {
     const end = (p: (typeof ps)[number]) => (merges(p) ? MERGE_X - 13 : DST_X);
     if (ps.length === 1) {
       const p = ps[0];
-      label(draw([[BOX, y], [end(p), yOfPiece(p)]], `p${i}`), p.rate, merges(p) ? [0.16, 0.3, 0.45] : [0.86, 0.72, 0.6], `l${i}`);
+      label(draw([[BOX, y], [end(p), yOfPiece(p)]], `p${i}`, p.rate), p.rate, merges(p) ? [0.16, 0.3, 0.45] : [0.86, 0.72, 0.6], `l${i}`);
       return;
     }
     const kind = fluid ? (ps.length > 3 ? 'manifold' : 'even') : splitKind(ps.map((p) => p.rate));
     kinds.push(kind);
     if (kind !== 'manifold') {
-      draw([[BOX, y], [SPLIT_X - 13, y]], `sb${i}`);
+      draw([[BOX, y], [SPLIT_X - 13, y]], `sb${i}`, w.sources[i].rate);
       block(SPLIT_X, y, 'splitter', `sp${i}`, fluid ? undefined : kind === 'even' ? `${ps.map(() => 1).join(':')} split` : kind === '2:1' ? '2:1 split *' : 'uneven');
-      ps.forEach((p, k) => label(draw([[SPLIT_X + 13, y], [end(p), yOfPiece(p)]], `p${i}-${k}`), p.rate, merges(p) ? [0.5, 0.65, 0.35] : [0.86, 0.72, 0.6], `l${i}-${k}`));
+      ps.forEach((p, k) => label(draw([[SPLIT_X + 13, y], [end(p), yOfPiece(p)]], `p${i}-${k}`, p.rate), p.rate, merges(p) ? [0.5, 0.65, 0.35] : [0.86, 0.72, 0.6], `l${i}-${k}`));
       return;
     }
     // manifold: splitters in a column, one beside each line it feeds; the belt runs down through them
     const order = [...ps].sort((a, b) => yOfPiece(a) - yOfPiece(b));
     const ys = order.map(yOfPiece);
-    draw([[BOX, y], [SPLIT_X - 13, ys[0]]], `sb${i}`);
+    draw([[BOX, y], [SPLIT_X - 13, ys[0]]], `sb${i}`, w.sources[i].rate);
     order.forEach((p, k) => {
       const last = k === order.length - 1;
       if (!last) {
         block(SPLIT_X, ys[k], 'splitter', `sp${i}-${k}`, k === 0 ? 'manifold' : undefined);
-        if (k < order.length - 2) draw([[SPLIT_X, ys[k] + 13], [SPLIT_X, ys[k + 1] - 13]], `chain${i}-${k}`);
-        label(draw([[SPLIT_X + 13, ys[k]], [end(p), ys[k]]], `p${i}-${k}`), p.rate, [0.7, 0.5, 0.85], `l${i}-${k}`);
+        if (k < order.length - 2) draw([[SPLIT_X, ys[k] + 13], [SPLIT_X, ys[k + 1] - 13]], `chain${i}-${k}`, order.slice(k + 1).reduce((a, q) => a + q.rate, 0));
+        label(draw([[SPLIT_X + 13, ys[k]], [end(p), ys[k]]], `p${i}-${k}`, p.rate), p.rate, [0.7, 0.5, 0.85], `l${i}-${k}`);
       } else {
         // what's left after the last splitter carries straight on to the last line
-        const at = draw([[SPLIT_X, ys[k - 1] + 13], [SPLIT_X, ys[k]], [end(p), ys[k]]], `p${i}-${k}`);
+        const at = draw([[SPLIT_X, ys[k - 1] + 13], [SPLIT_X, ys[k]], [end(p), ys[k]]], `p${i}-${k}`, p.rate);
         label(at, p.rate, [0.7, 0.5, 0.85], `l${i}-${k}`);
       }
     });
@@ -168,6 +183,7 @@ export default function WiringDiagram({ w }: { w: Wiring }) {
         <text x={0} y={12} fontSize={10} fill="var(--muted)">{fluid ? 'INCOMING PIPES' : 'INCOMING BELTS'}</text>
         <text x={W} y={12} fontSize={10} fill="var(--muted)" textAnchor="end">GOES TO</text>
         {belts}
+        {movers}
         {nodes}
         {labels}
       </svg>

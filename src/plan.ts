@@ -1,6 +1,6 @@
 import {
   belts, buildings, costs, extractors, items, JUNCTION, MERGER, nameOf, pipes, POWER, recipeById, SPLITTER, WATER, WATER_PUMP,
-  type Conveyor, type Flow,
+  type Conveyor, type Flow, fmt,
 } from './game';
 import { minerCap, solveClean as solve, type Settings, type Solution } from './solver';
 import { describe, staircase, wire, type End, type Wiring } from './wiring';
@@ -265,12 +265,22 @@ export function buildPlan(sol: Solution, s: Settings): Plan {
       if (!links.length) return;
       const src: End[] = g.lines.map((ln, l) => ({ label: lineName(g, l), icon: nameOf(g.building!), rate: ln.outputs[j].segs[ln.outputs[j].segs.length - 1], lanes: 1, cap: Infinity, ref: `line:${l}` }));
       const dst: End[] = links.map((e) => ({ label: byId[e.to].label, icon: groupIcon(byId[e.to], f.item), rate: e.rate, lanes: e.belts.length, cap: maxConveyor(items[e.item].fluid, s).rate, ref: `edge:${e.id}` }));
-      const pieces = wire(src, dst);
+      // all of it fits one belt going to several groups: merge the lines, then split off along that belt
+      const total = src.reduce((a, x) => a + x.rate, 0);
+      const fluid = items[f.item].fluid;
+      const bus = links.length > 1 && total <= maxConveyor(fluid, s).rate + 0.01;
+      const merged: End[] = [{ label: g.lines.length > 1 ? `Lines 1–${g.lines.length} merged` : src[0].label, icon: src[0].icon, rate: total, lanes: 1, cap: Infinity, ref: 'bus' }];
+      const pieces = wire(bus ? merged : src, dst);
       links.forEach((e, k) => {
         e.laneRates = e.belts.map((_, ln) => pieces.filter((p) => p.to === k && p.lane === ln).reduce((s2, p) => s2 + p.rate, 0));
         e.belts = e.laneRates.map((r) => conveyorFor(r, items[e.item].fluid, s)); // e.g. 100/min on Mk.2 next to 33/min on Mk.1
       });
-      wirings.push(describe(`${g.label}: ${nameOf(f.item)} out`, `out:${g.id}:${f.item}`, src, dst, pieces, items[f.item].fluid));
+      const w = describe(`${g.label}: ${nameOf(f.item)} out`, `out:${g.id}:${f.item}`, bus ? merged : src, dst, pieces, fluid);
+      if (bus && g.lines.length > 1) {
+        w.mergers += g.lines.length - 1;
+        w.steps.unshift(`${fluid ? 'Pipeline Junctions' : 'Mergers'}: ${src.map((x) => x.label).join(' + ')} → one ${fluid ? 'pipe' : 'belt'} (${fmt(total)}${fluid ? ' m³' : ''}/min)`);
+      }
+      wirings.push({ ...w, bus });
     });
   }
   for (const g of groups) {

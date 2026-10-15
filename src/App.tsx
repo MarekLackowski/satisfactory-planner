@@ -45,6 +45,31 @@ function load(): Settings {
   }
 }
 
+/** a remembered size in px (null = the default from CSS) */
+function useSize(key: string) {
+  const [v, setV] = useState<number | null>(() => {
+    try { return Number(localStorage.getItem(key)) || null; } catch { return null; }
+  });
+  useEffect(() => {
+    try { if (v) localStorage.setItem(key, String(Math.round(v))); else localStorage.removeItem(key); } catch { /* storage unavailable */ }
+  }, [key, v]);
+  return [v, setV] as const;
+}
+
+/** drag a pane edge: `move` gets how far the pointer went since it was pressed */
+function dragEdge(e: React.PointerEvent<HTMLElement>, move: (dx: number, dy: number) => void) {
+  const el = e.currentTarget;
+  const [x0, y0] = [e.clientX, e.clientY];
+  el.setPointerCapture(e.pointerId);
+  const onMove = (ev: PointerEvent) => move(ev.clientX - x0, ev.clientY - y0);
+  const up = () => {
+    el.removeEventListener('pointermove', onMove);
+    el.removeEventListener('pointerup', up);
+  };
+  el.addEventListener('pointermove', onMove);
+  el.addEventListener('pointerup', up);
+}
+
 const toggle = <T,>(list: T[], v: T, on: boolean) => (on ? [...new Set([...list, v])] : list.filter((x) => x !== v));
 
 export default function App() {
@@ -78,6 +103,9 @@ export default function App() {
   const [dir, setDir] = useState<Dir>(active?.dir ?? 'TB');
   const [moved, setMoved] = useState<Record<string, Pt>>(active?.moved ?? {});
   const [refit, setRefit] = useState(0);
+  // the side panel and the summary can be resized by dragging their edge (double-click resets)
+  const [asideW, setAsideW] = useSize('satisfactory-aside-width');
+  const [summaryH, setSummaryH] = useSize('satisfactory-summary-height');
   // fullscreen graph: only the canvas and the summary bar (which can be hidden)
   const [full, setFull] = useState(false);
   const [hideSummary, setHideSummary] = useState(false);
@@ -181,7 +209,7 @@ export default function App() {
   const alts = recipes.filter((r) => r.alt && (r.name + nameOf(r.outputs[0].item)).toLowerCase().includes(altQuery.toLowerCase()));
 
   return (
-    <div className={`app${full ? ' full' : ''}`}>
+    <div className={`app${full ? ' full' : ''}`} style={asideW ? ({ '--aside': `${asideW}px` } as React.CSSProperties) : undefined}>
       <aside>
         <header>
           <h1>Satisfactory Factory Planner</h1>
@@ -205,11 +233,19 @@ export default function App() {
               addFactory({ ...structuredClone(src), id: newFactory('').id, name: `${src.name} (copy)`, updated: Date.now() });
             }}
             onDelete={removeFactory}>
-            <Autoplanner s={s} options={makeable} onPick={(item, rate, o) => {
-              addFactory(newFactory(nameOf(item), { icon: nameOf(item), outputs: [{ item, rate, maximize: false }], only: o.recipes, dir }));
-              setNaming('');
-              setTab('production');
-            }} />
+            <Autoplanner s={s} options={makeable} inputItems={inputItems}
+              onPick={(targets, o) => {
+                addFactory(newFactory(targets.map((t) => nameOf(t.item)).join(' + '), { icon: nameOf(targets[0].item), outputs: targets.map((t) => ({ ...t, maximize: false })), only: o.recipes, dir }));
+                setNaming('');
+                setTab('production');
+              }}
+              onPickMade={(inputs, m) => {
+                // the resources become the factory's inputs, making as much as they allow
+                const rate = Math.floor(m.rate * 100) / 100;
+                addFactory(newFactory(nameOf(m.item), { icon: nameOf(m.item), outputs: [{ item: m.item, rate, maximize: false }], inputs: inputs.map((i) => ({ kind: 'rate', ...i })), only: m.recipes, dir }));
+                setNaming('');
+                setTab('production');
+              }} />
           </FactoriesPanel>
         ) : view === 'production' ? (
           <div className="panel">
@@ -435,6 +471,12 @@ export default function App() {
       </aside>
 
       <main ref={mainRef}>
+        <div className="resize-x" role="separator" aria-orientation="vertical" aria-label="Resize the side panel" title="Drag to resize · double-click to reset"
+          onDoubleClick={() => setAsideW(null)}
+          onPointerDown={(e) => {
+            const w0 = document.querySelector('aside')?.offsetWidth ?? 400;
+            dragEdge(e, (dx) => setAsideW(Math.min(Math.max(260, w0 + dx), innerWidth - 320)));
+          }} />
         {!active ? (
           <div className="empty">
             <img src={icon('Constructor')} width={96} height={96} alt="" />
@@ -478,7 +520,15 @@ export default function App() {
           </FactoryCanvas>
         )}
         {result && 'info' in result && <div className="info">{result.info}</div>}
-        {plan && !(full && hideSummary) && <Summary plan={plan} budget={s.selfPowered ? undefined : s.powerBudget} selfPowered={s.selfPowered} />}
+        {plan && !(full && hideSummary) && (
+          <div className="resize-y" role="separator" aria-orientation="horizontal" aria-label="Resize the summary" title="Drag to resize · double-click to reset"
+            onDoubleClick={() => setSummaryH(null)}
+            onPointerDown={(e) => {
+              const h0 = (e.currentTarget.nextElementSibling as HTMLElement).offsetHeight;
+              dragEdge(e, (_, dy) => setSummaryH(Math.min(Math.max(60, h0 - dy), innerHeight - 160)));
+            }} />
+        )}
+        {plan && !(full && hideSummary) && <Summary height={summaryH} plan={plan} budget={s.selfPowered ? undefined : s.powerBudget} selfPowered={s.selfPowered} />}
         </>)}
       </main>
     </div>
@@ -491,14 +541,14 @@ const List = ({ rows }: { rows: [string, string, string][] }) => (
   </ul>
 );
 
-function Summary({ plan, budget, selfPowered }: { plan: Plan; budget?: number; selfPowered?: boolean }) {
+function Summary({ plan, budget, selfPowered, height }: { plan: Plan; budget?: number; selfPowered?: boolean; height: number | null }) {
   const machines = plan.groups.filter((g) => g.kind === 'recipe');
   const sources = plan.groups.filter((g) => g.kind === 'extract' || g.kind === 'input');
   const outs = plan.groups.filter((g) => g.kind === 'output' || g.kind === 'sink');
   const guide = plan.wirings.filter((w) => w.splitters || w.mergers);
   const shards = plan.groups.reduce((a, g) => a + g.machines.reduce((x, m) => x + m.shards, 0), 0);
   return (
-    <div className="summary">
+    <div className={`summary${height ? ' sized' : ''}`} style={height ? { height } : undefined}>
       {plan.warnings.map((w) => <div key={w} className="warn">{w}</div>)}
       <div className="stats">
         <div><b>{fmt(plan.power)}</b>{budget ? <> / {fmt(budget)}</> : null} MW power{budget ? <meter min={0} max={budget} value={plan.power} high={budget * 0.95} optimum={budget * 0.5} /> : null}</div>

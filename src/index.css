@@ -53,7 +53,7 @@ input[type='number'], input[type='search'], select {
 input[type='number'] { width: 76px; }
 :focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
 
-.app { display: grid; grid-template-columns: 400px 1fr; height: 100%; }
+.app { display: grid; grid-template-columns: var(--aside, 400px) 1fr; height: 100%; }
 aside { background: var(--panel); border-right: 1px solid var(--line); display: flex; flex-direction: column; min-height: 0; }
 aside header { padding: 12px 16px 0; border-bottom: 1px solid var(--line); }
 h1 { font-size: 17px; margin: 0 0 10px; }
@@ -86,7 +86,12 @@ button.x { padding: 0 8px; border: none; color: var(--muted); font-size: 18px; }
 .alt span { display: flex; flex-direction: column; min-width: 0; }
 .alt small { color: var(--muted); font-size: 11px; }
 
-main { display: flex; flex-direction: column; min-width: 0; min-height: 0; }
+main { position: relative; display: flex; flex-direction: column; min-width: 0; min-height: 0; }
+.resize-x { position: absolute; left: -3px; top: 0; bottom: 0; width: 6px; cursor: col-resize; z-index: 20; touch-action: none; }
+.resize-y { flex: none; height: 6px; margin-bottom: -3px; cursor: row-resize; position: relative; z-index: 5; touch-action: none; }
+.resize-x:hover, .resize-y:hover { background: color-mix(in srgb, var(--accent) 45%, transparent); }
+.summary.sized { max-height: none; flex: none; }
+.app.full .resize-x { display: none; }
 .toolbar { display: flex; align-items: center; gap: 14px; padding: 8px 12px; background: var(--panel); border-bottom: 1px solid var(--line); flex-wrap: wrap; }
 .legend { display: inline-flex; align-items: center; gap: 4px; font-size: 12px; color: var(--muted); }
 .legend i { display: inline-block; width: 14px; height: 6px; border-radius: 3px; margin-left: 6px; }
@@ -96,6 +101,9 @@ main { display: flex; flex-direction: column; min-width: 0; min-height: 0; }
 .canvas-wrap { position: relative; flex: 1; min-height: 300px; }
 .canvas-wrap canvas { position: absolute; inset: 0; width: 100%; height: 100%; cursor: grab; touch-action: none; }
 .canvas-wrap canvas:active { cursor: grabbing; }
+.wiring .flow { animation: wiring-flow 0.8s linear infinite; }
+@keyframes wiring-flow { to { stroke-dashoffset: -14; } }
+@media (prefers-reduced-motion: reduce) { .wiring .mover { display: none; } .wiring .flow { animation: none; } }
 .fit { position: absolute; right: 12px; top: 12px; display: flex; gap: 6px; }
 .app.full { grid-template-columns: 1fr; }
 .app.full aside, .app.full .toolbar { display: none; }
@@ -121,6 +129,8 @@ main:fullscreen { background: var(--bg); }
   main { height: 100vh; }
   .cols { grid-template-columns: 1fr; }
   .summary { max-height: none; }
+  .summary.sized { height: auto !important; }
+  .resize-x, .resize-y { display: none; }
 }
 h2 { display: flex; align-items: center; gap: 6px; }
 .h2-actions { margin-left: auto; display: inline-flex; gap: 4px; text-transform: none; letter-spacing: 0; }
@@ -226,3 +236,8 @@ input:disabled { opacity: 0.45; cursor: not-allowed; }
 .way-stats b { color: var(--text); }
 .way-alts { display: flex; flex-wrap: wrap; gap: 3px 10px; font-size: 11px; color: var(--muted); }
 .way-alts span { display: inline-flex; align-items: center; gap: 3px; }
+.made { list-style: none; margin: 10px 0 0; padding: 0; display: flex; flex-direction: column; gap: 4px; max-height: 420px; overflow: auto; }
+.made li { display: flex; align-items: center; gap: 8px; padding: 4px 6px; border-radius: 6px; background: var(--node); border: 1px solid var(--line); }
+.made li > span:first-of-type { flex: 1; min-width: 0; display: flex; flex-direction: column; }
+.made small { color: var(--muted); font-size: 11px; }
+.made-uses { display: inline-flex; gap: 2px; }

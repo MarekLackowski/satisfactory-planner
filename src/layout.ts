@@ -259,17 +259,20 @@ function inner(n: NodeBox, dir: Dir, s: Settings, segs: Segment[], rin: number[]
     const via = w.key;
     // one column per outgoing belt, collecting from the lines top to bottom: a merger at each line it takes
     // from, or a single merger at the last one for up to 3 belts
-    const belts = w.sinks.flatMap((d, to) => Array.from({ length: d.lanes }, (_, lane) => ({ to, lane, ps: w.pieces.filter((p) => p.to === to && p.lane === lane).sort((p, q) => p.from - q.from) }))).filter((x) => x.ps.length);
+    const belts = w.bus
+      ? [{ to: 0, lane: 0, ps: g.lines.map((ln, l) => ({ from: l, to: 0, lane: 0, rate: ln.outputs[j].segs[ln.outputs[j].segs.length - 1] })) }]
+      : w.sinks.flatMap((d, to) => Array.from({ length: d.lanes }, (_, lane) => ({ to, lane, ps: w.pieces.filter((p) => p.to === to && p.lane === lane).sort((p, q) => p.from - q.from) }))).filter((x) => x.ps.length);
+    const ref = (p: { from: number }) => (w.bus ? `line:${p.from}` : w.sources[p.from].ref);
     const chain = belts.map((x) => x.ps.length > 3);
-    const cols = belts.flatMap((x, k) => (chain[k] || x.ps.length === 1 ? [{ k, m: 0, deep: lineOf(w.sources[x.ps[0].from].ref) }] : x.ps.slice(0, -1).map((p, m) => ({ k, m, deep: lineOf(w.sources[p.from].ref) }))));
+    const cols = belts.flatMap((x, k) => (chain[k] || x.ps.length === 1 ? [{ k, m: 0, deep: lineOf(ref(x.ps[0])) }] : x.ps.slice(0, -1).map((p, m) => ({ k, m, deep: lineOf(ref(p)) }))));
     const xs = columns(A - PAD - rout[j] * L - L / 2, cols.map((c) => -c.deep), -1);
     const colX = (k: number, m: number) => xs[cols.findIndex((c) => c.k === k && (chain[k] || belts[k].ps.length === 1 || c.m === m))];
-    const base = (p: (typeof belts)[number]['ps'][number]) => outRow(lineOf(w.sources[p.from].ref), j);
+    const base = (p: (typeof belts)[number]['ps'][number]) => outRow(lineOf(ref(p)), j);
     const xOf = (k: number, m: number) => colX(k, chain[k] || belts[k].ps.length === 1 ? 0 : Math.min(m, belts[k].ps.length - 2));
-    const dy = shift(belts.flatMap((x, k) => x.ps.map((p, m) => ({ p, line: lineOf(w.sources[p.from].ref), x: xOf(k, m) }))), -1);
+    const dy = shift(belts.flatMap((x, k) => x.ps.map((p, m) => ({ p, line: lineOf(ref(p)), x: xOf(k, m) }))), -1);
     const row = (p: (typeof belts)[number]['ps'][number]) => base(p) + dy.get(p)!;
     belts.forEach((x, k) => {
-      const end = { end: via, dst: `${w.sinks[x.to].ref}#${x.lane}`, via };
+      const end = w.bus ? { end: via, via } : { end: via, dst: `${w.sinks[x.to].ref}#${x.lane}`, via };
       const last = x.ps[x.ps.length - 1];
       const xl = colX(k, chain[k] ? 0 : x.ps.length - 2);
       if (chain[k] || x.ps.length === 1) {
@@ -464,6 +467,7 @@ export function geometry(plan: Plan, s: Settings, arr: Arranged, moved: Record<s
   const hRuns: Run[] = [];
   const vRuns: Run[] = [];
   // short links first: they have the fewest options, long ones can detour around them
+  const routed: { e: (typeof plan.edges)[number]; pts: Pt[] }[] = [];
   const order = [...plan.edges].sort((e1, e2) => {
     const d = (e: typeof e1) => Math.abs(byId[e.from].outPort[e.item].y - byId[e.to].inPort[e.item].y) + Math.abs(byId[e.from].outPort[e.item].x - byId[e.to].inPort[e.item].x);
     return d(e1) - d(e2);
@@ -485,8 +489,16 @@ export function geometry(plan: Plan, s: Settings, arr: Arranged, moved: Record<s
       if (p.x === q.x) vRuns.push({ at: p.x, from: p.y, to: q.y, item: e.item, half });
       else hRuns.push({ at: p.y, from: p.x, to: q.x, item: e.item, half });
     }
-    segs.push(segment(pts, e.item, e.rate, s, e.id, { start: `out:${e.from}:${e.item}`, end: `in:${e.to}:${e.item}` }, e.laneRates));
+    routed.push({ e, pts });
   }
+  const busOut = new Set(plan.wirings.filter((w) => w.bus).map((w) => w.key));
+  const shared = new Map<string, typeof routed>();
+  for (const r of routed) {
+    const k = `out:${r.e.from}:${r.e.item}`;
+    if (busOut.has(k)) shared.set(k, [...(shared.get(k) ?? []), r]);
+    else segs.push(segment(r.pts, r.e.item, r.e.rate, s, r.e.id, { start: k, end: `in:${r.e.to}:${r.e.item}` }, r.e.laneRates));
+  }
+  for (const [k, list] of shared) busTree(list, k, true, s, segs);
   const x = Math.min(...nodes.map((n) => n.x)) - 40;
   const y = Math.min(...nodes.map((n) => n.y)) - 40;
   return {
@@ -495,6 +507,78 @@ export function geometry(plan: Plan, s: Settings, arr: Arranged, moved: Record<s
     h: Math.max(...nodes.map((n) => n.y + n.h)) + 40 - y,
     nodes, segs, wirings: plan.wirings,
   };
+}
+
+/** length two routes from the same point run together */
+function together(p: Pt[], q: Pt[]) {
+  let [i, j, at, run] = [1, 1, p[0], 0];
+  while (i < p.length && j < q.length) {
+    const [a, b] = [p[i], q[j]];
+    const da = { x: Math.sign(a.x - at.x), y: Math.sign(a.y - at.y) };
+    const db = { x: Math.sign(b.x - at.x), y: Math.sign(b.y - at.y) };
+    if (da.x !== db.x || da.y !== db.y) break;
+    const la = Math.abs(a.x - at.x) + Math.abs(a.y - at.y);
+    const lb = Math.abs(b.x - at.x) + Math.abs(b.y - at.y);
+    const step = Math.min(la, lb);
+    run += step;
+    at = { x: at.x + da.x * step, y: at.y + da.y * step };
+    if (la <= step) i++;
+    if (lb <= step) j++;
+  }
+  return run;
+}
+
+/** a route up to `d` along it */
+function before(pts: Pt[], d: number): Pt[] {
+  const out = [pts[0]];
+  let left = d;
+  for (let i = 1; i < pts.length; i++) {
+    const l = Math.abs(pts[i].x - pts[i - 1].x) + Math.abs(pts[i].y - pts[i - 1].y);
+    if (left <= l) return [...out, after(pts, d)[0]];
+    out.push(pts[i]);
+    left -= l;
+  }
+  return out;
+}
+
+/** a route from `d` along it onwards (orthogonal polyline) */
+function after(pts: Pt[], d: number): Pt[] {
+  let left = d;
+  for (let i = 1; i < pts.length; i++) {
+    const l = Math.abs(pts[i].x - pts[i - 1].x) + Math.abs(pts[i].y - pts[i - 1].y);
+    if (left < l) {
+      const t = left / l;
+      return [{ x: pts[i - 1].x + (pts[i].x - pts[i - 1].x) * t, y: pts[i - 1].y + (pts[i].y - pts[i - 1].y) * t }, ...pts.slice(i)];
+    }
+    left -= l;
+  }
+  return [pts[pts.length - 1]];
+}
+
+/**
+ * links leaving one port on one belt: draw the shared stretch once, carrying what is still on it, with a
+ * splitter where links part (the manifold of the port's build recipe)
+ */
+function busTree(list: { e: Plan['edges'][number]; pts: Pt[] }[], key: string, first: boolean, s: Settings, segs: Segment[]) {
+  const head = { start: first ? key : undefined, via: key };
+  if (list.length === 1) {
+    const { e, pts } = list[0];
+    segs.push(segment(pts, e.item, e.rate, s, e.id, { ...head, end: `in:${e.to}:${e.item}` }, e.laneRates));
+    return;
+  }
+  const d = Math.min(...list.slice(1).map((r) => together(list[0].pts, r.pts)));
+  let rest = list;
+  if (d > 0.5) {
+    const pts = list[0].pts;
+    segs.push(segment(before(pts, d), list[0].e.item, list.reduce((a, r) => a + r.e.rate, 0), s, undefined, head));
+    rest = list.map((r) => ({ ...r, pts: after(r.pts, d) }));
+  }
+  // routes leaving in the same direction stay together a while longer
+  const dirOf = (pts: Pt[]) => `${Math.sign(pts[1].x - pts[0].x)},${Math.sign(pts[1].y - pts[0].y)}`;
+  const groups = new Map<string, typeof list>();
+  for (const r of rest) groups.set(dirOf(r.pts), [...(groups.get(dirOf(r.pts)) ?? []), r]);
+  if (groups.size === 1 && d <= 0.5) return list.forEach((r) => busTree([r], key, first, s, segs)); // can't tell them apart
+  for (const g of groups.values()) busTree(g, key, first && d <= 0.5, s, segs);
 }
 
 /** how many times links between groups cross each other (+ a small term for total length as tie-break) */

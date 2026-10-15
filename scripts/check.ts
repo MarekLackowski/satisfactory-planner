@@ -5,7 +5,7 @@ import { layout } from '../src/layout';
 import { buildPlan, conveyorFor, solvePlan } from '../src/plan';
 import { buildSim, step } from '../src/sim';
 import { solve, type Settings } from '../src/solver';
-import { autoplan } from '../src/autoplan';
+import { autoplan, fromResources } from '../src/autoplan';
 
 const base: Settings = {
   outputs: [], inputs: [], unlimitedRaw: true, unlimitedWater: true, alts: [],
@@ -312,7 +312,7 @@ console.log('all checks passed');
 // recipes makes the product with exactly those resources
 {
   const s: Settings = { ...base, alts: recipes.filter((r) => r.alt).map((r) => r.id) };
-  const list = await autoplan('Desc_ModularFrameHeavy_C', 10, s);
+  const list = await autoplan([{ item: 'Desc_ModularFrameHeavy_C', rate: 10 }], s);
   assert.ok(list.length >= 3, `${list.length} options`);
   assert.ok(list[0].tags.includes('Recommended'));
   assert.equal(list[0].types, Math.min(...list.map((o) => o.types)));
@@ -334,4 +334,34 @@ console.log('all checks passed');
     }
   }
   console.log('staircase ok');
+}
+
+// what can be made from given resources: iron ore alone makes plates / rods / screws but nothing needing more
+{
+  const m = await fromResources([{ item: 'Desc_OreIron_C', rate: 60 }], { ...base, alts: [] });
+  const ids = m.map((x) => x.item);
+  for (const id of ['Desc_IronPlate_C', 'Desc_IronRod_C', 'Desc_IronScrew_C', 'Desc_IronPlateReinforced_C']) assert.ok(ids.includes(id), `${id} from iron ore`);
+  assert.ok(!ids.includes('Desc_SteelIngot_C') && !ids.includes('Desc_Wire_C'), 'nothing needing coal or copper');
+  near(m.find((x) => x.item === 'Desc_IronPlate_C')!.rate, 40, 'plates from 60 ore');
+  console.log('from resources ok');
+}
+
+// several links leaving one port on one belt: drawn as one belt with a splitter where each leaves
+{
+  const s: Settings = { ...base, beltMk: [1, 2, 3, 4], alts: ['Recipe_Alternate_Screw_C', 'Recipe_Alternate_Wire_1_C'], outputs: [
+    { item: 'Desc_IronRod_C', rate: 130.7, maximize: false }, { item: 'Desc_IronScrew_C', rate: 297, maximize: false },
+    { item: 'Desc_Wire_C', rate: 118.8, maximize: false }, { item: 'Desc_IronPlate_C', rate: 59.4, maximize: false }] };
+  const p = buildPlan(await solve(s), s);
+  const w = p.wirings.find((x) => x.key === 'out:Recipe_IngotIron_C:Desc_IronIngot_C')!;
+  assert.ok(w.bus && w.splitters === 3, `bus with 3 splitters: ${w.steps.join(' | ')}`);
+  const l = layout(p, s);
+  const sim = buildSim(l);
+  assert.equal(sim.junctions.filter((j) => j.wiring?.key === w.key && j.kind === 'splitter').length, 3, 'a splitter where each link leaves');
+  const out = sim.belts.filter((b) => b.seg.edge?.includes('>out_'));
+  const before = out.reduce((a, b) => a + b.sunk, 0);
+  for (let t = 0; t < 300; t += 0.05) step(sim, 0.05);
+  // ponytail: ~5% slack, the sim starts from a warmed-up but not exact steady state
+  const per = ((out.reduce((a, b) => a + b.sunk, 0) - before) / 300) * 60;
+  assert.ok(Math.abs(per - (130.7 + 297 + 118.8 + 59.4)) < 30, `simulated ${per.toFixed(1)}/min out`);
+  console.log('bus ok');
 }
