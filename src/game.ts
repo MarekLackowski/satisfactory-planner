@@ -8,7 +8,9 @@ export type Conveyor = { id: string; name: string; mk: number; rate: number };
 export type Recipe = {
   id: string; name: string; alt: boolean; building: string; duration: number;
   inputs: Flow[]; outputs: Flow[]; power?: number;
+  need?: string[]; // unlocked by any of these: an alternate's recipe id (hard drive) or a MAM research id; none = always
 };
+export type Research = { id: string; name: string; recipes: string[] };
 
 export const items = data.items as Record<string, Item>;
 export const buildings = data.buildings as Record<string, Building>;
@@ -17,6 +19,7 @@ export const belts = data.belts as Conveyor[];
 export const pipes = data.pipes as Conveyor[];
 export const recipes = data.recipes as Recipe[];
 export const costs = data.costs as Record<string, { item: string; amount: number }[]>;
+export const mam = data.mam as Research[]; // MAM research nodes that unlock production recipes
 export const recipeById = Object.fromEntries(recipes.map((r) => [r.id, r]));
 
 export const SPLITTER = 'Build_ConveyorAttachmentSplitter_C';

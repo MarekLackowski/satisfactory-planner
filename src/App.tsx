@@ -6,7 +6,7 @@ import WiringDiagram from './WiringDiagram';
 import { Icon, ItemSelect } from './ui';
 import Autoplanner from './Autoplanner';
 import {
-  POWER, unit, TIER_COLORS, type ColorBy, belts, buildings, extractors, fmt, icon, itemIcon, items, nameOf, pipes, producible, rawItems, recipes, WATER_PUMP, type Purity,
+  POWER, unit, TIER_COLORS, type ColorBy, belts, buildings, extractors, fmt, icon, itemIcon, items, nameOf, mam, pipes, producible, rawItems, recipeById, recipes, WATER_PUMP, type Purity,
 } from './game';
 import { autoArrange, geometry, type Dir, type Pt } from './layout';
 import { solvePlan, type Plan } from './plan';
@@ -39,7 +39,12 @@ const PRESETS: Record<string, Settings['weights']> = {
 
 function load(): Settings {
   try {
-    return { ...DEFAULTS, ...JSON.parse(localStorage.getItem(STORE) ?? '{}') };
+    const saved = JSON.parse(localStorage.getItem(STORE) ?? '{}');
+    const s = { ...DEFAULTS, ...saved };
+    // MAM research used to be always on: existing setups keep it unlocked once, after that it's a normal unlock
+    if (saved.alts && !localStorage.getItem('satisfactory-mam-v1')) s.alts = [...new Set([...s.alts, ...mam.map((m) => m.id)])];
+    localStorage.setItem('satisfactory-mam-v1', '1');
+    return s;
   } catch {
     return DEFAULTS;
   }
@@ -399,7 +404,7 @@ export default function App() {
         ) : (
           <div className="panel">
             <div className="row unlock-all">
-              <button onClick={() => set({ buildings: ALL_BUILDINGS, beltMk: belts.map((b) => b.mk), pipeMk: pipes.map((b) => b.mk), alts: recipes.filter((r) => r.alt).map((r) => r.id) })}>Unlock everything</button>
+              <button onClick={() => set({ buildings: ALL_BUILDINGS, beltMk: belts.map((b) => b.mk), pipeMk: pipes.map((b) => b.mk), alts: [...recipes.filter((r) => r.alt).map((r) => r.id), ...mam.map((m) => m.id)] })}>Unlock everything</button>
               <button onClick={() => set({ buildings: [], beltMk: [], pipeMk: [], alts: [] })}>Deselect everything</button>
             </div>
             <section>
@@ -434,7 +439,7 @@ export default function App() {
               </div>
             </section>
             <section>
-              <h2>Alternate recipes <small>({s.alts.length}/{recipes.filter((r) => r.alt).length})</small></h2>
+              <h2>Alternate recipes <small>({s.alts.filter((id) => recipeById[id]?.alt).length}/{recipes.filter((r) => r.alt).length})</small></h2>
               <div className="row">
                 <input type="search" placeholder="Search…" value={altQuery} onChange={(e) => setAltQuery(e.target.value)} />
                 <button onClick={() => set({ alts: [...new Set([...s.alts, ...alts.map((r) => r.id)])] })}>All</button>
@@ -450,6 +455,27 @@ export default function App() {
                       <small>
                         {r.inputs.map((f) => `${fmt(f.rate)} ${nameOf(f.item)}`).join(' + ')} → {r.outputs.map((f) => `${fmt(f.rate)} ${nameOf(f.item)}`).join(' + ')} · {nameOf(r.building)}
                       </small>
+                    </span>
+                  </label>
+                ))}
+              </div>
+            </section>
+            <section>
+              <h2>MAM research <small>({mam.filter((m) => s.alts.includes(m.id)).length}/{mam.length})</small>
+                <span className="h2-actions">
+                  <button onClick={() => set({ alts: [...new Set([...s.alts, ...mam.map((m) => m.id)])] })}>All</button>
+                  <button onClick={() => set({ alts: s.alts.filter((id) => !mam.some((m) => m.id === id)) })}>None</button>
+                </span>
+              </h2>
+              <p className="hint">Recipes only the M.A.M. unlocks, like Caterium, Quickwire, Compacted Coal or Turbofuel.</p>
+              <div className="alts">
+                {mam.filter((m) => (m.name + m.recipes.map((id) => recipeById[id].name).join()).toLowerCase().includes(altQuery.toLowerCase())).map((m) => (
+                  <label key={m.id} className="alt">
+                    <input type="checkbox" checked={s.alts.includes(m.id)} onChange={(e) => set({ alts: toggle(s.alts, m.id, e.target.checked) })} />
+                    <Icon src={itemIcon(recipeById[m.recipes[0]].outputs[0].item)} />
+                    <span>
+                      <b>{m.name}</b>
+                      <small>{m.recipes.map((id) => recipeById[id].name).join(', ')}</small>
                     </span>
                   </label>
                 ))}

@@ -93,7 +93,7 @@ for (const r of byNative.FGRecipe) {
   recipes.push({
     id: r.ClassName,
     name: r.mDisplayName.replace(/^Alternate: /, ''),
-    alt: r.ClassName.includes('Alternate'),
+    alt: false, // set below from the hard drives
     building,
     duration: dur,
     inputs: perMin(ins),
@@ -105,11 +105,43 @@ for (const r of byNative.FGRecipe) {
   });
 }
 
-// "alternate" = unlocked by a hard drive (a few MAM/milestone recipes also have Alternate in their class name)
-const hardDrive = new Set();
-for (const s of byNative.FGSchematic.filter((s) => s.mType === 'EST_Alternate'))
-  for (const u of s.mUnlocks ?? []) for (const m of (u.mRecipes ?? '').matchAll(/(\w+_C)'/g)) hardDrive.add(m[1]);
-for (const r of recipes) r.alt = hardDrive.has(r.id);
+// ---- what unlocks each recipe. Milestones (and tutorial / AWESOME Shop) are always available here; a hard drive
+// unlocks one alternate (plus side recipes such as packaging, which come with it); a MAM research node unlocks its
+// recipes. "Custom" schematics are granted by another schematic, so their recipes count as that one's.
+const schematics = Object.fromEntries(byNative.FGSchematic.map((s) => [s.ClassName, s]));
+const grants = (s, key) => [...(s.mUnlocks ?? []).flatMap((u) => [...(u[key] ?? '').matchAll(/(\w+_C)'/g)].map((m) => m[1]))];
+const recipesOf = (id, seen = new Set()) => {
+  if (seen.has(id) || !schematics[id]) return [];
+  seen.add(id);
+  return [...grants(schematics[id], 'mRecipes'), ...grants(schematics[id], 'mSchematics').flatMap((c) => recipesOf(c, seen))];
+};
+const always = new Set();
+const need = {}; // recipe id -> unlock keys (an alternate's own recipe id, or a MAM research id)
+const mam = [];
+const byId = Object.fromEntries(recipes.map((r) => [r.id, r]));
+for (const s of byNative.FGSchematic) {
+  const list = recipesOf(s.ClassName).filter((id) => byId[id]);
+  if (['EST_Milestone', 'EST_Tutorial', 'EST_ResourceSink'].includes(s.mType)) list.forEach((id) => always.add(id));
+  if (s.mType === 'EST_Alternate' && list.length) {
+    // the hard drive's own recipe is the one named like it; the rest come along with it
+    const main = list.find((id) => byId[id].name === s.mDisplayName.replace(/^Alternate: /, '')) ?? list[0];
+    byId[main].alt = true;
+    for (const id of list) (need[id] ??= []).push(main);
+  }
+  if (s.mType === 'EST_MAM' && list.length) {
+    mam.push({ id: s.ClassName, name: s.mDisplayName, recipes: list });
+    for (const id of list) (need[id] ??= []).push(s.ClassName);
+  }
+}
+for (const r of recipes) {
+  r.alt = !!r.alt && !always.has(r.id);
+  if (need[r.id] && !always.has(r.id)) r.need = [...new Set(need[r.id])];
+}
+// research nodes that unlock something only research can (production recipes, not already a milestone's)
+const mamNodes = mam
+  .map((m) => ({ ...m, recipes: [...new Set(m.recipes)].filter((id) => byId[id].need) }))
+  .filter((m) => m.recipes.length)
+  .sort((a, b) => a.id.localeCompare(b.id));
 
 // ---- power plants: power ("MW") is an item they produce from fuel, so the LP can plan electricity like any part.
 // Generators draw nothing themselves; fuel/s = MW / energy (MJ per item, or per litre for fluids).
@@ -165,7 +197,7 @@ for (const list of Object.values(costs)) for (const { item } of list) {
 }
 
 fs.mkdirSync('src/data', { recursive: true });
-fs.writeFileSync('src/data/game.json', JSON.stringify({ items, buildings, extractors, belts, pipes, recipes, costs }));
-console.log(`items ${Object.keys(items).length}, recipes ${recipes.length} (alt ${recipes.filter((r) => r.alt).length}), buildings ${Object.keys(buildings).length}, extractors ${Object.keys(extractors).length}, costs ${Object.keys(costs).length}`);
+fs.writeFileSync('src/data/game.json', JSON.stringify({ items, buildings, extractors, belts, pipes, recipes, costs, mam: mamNodes }));
+console.log(`items ${Object.keys(items).length}, recipes ${recipes.length} (alt ${recipes.filter((r) => r.alt).length}, MAM nodes ${mamNodes.length}), buildings ${Object.keys(buildings).length}, extractors ${Object.keys(extractors).length}, costs ${Object.keys(costs).length}`);
 console.log(belts.map((b) => `${b.name}=${b.rate}`).join(', '), '|', pipes.map((b) => `${b.name}=${b.rate}`).join(', '));
 console.log(Object.values(extractors).map((e) => `${e.name}=${e.rate} [${e.resources.length}]`).join(', '));

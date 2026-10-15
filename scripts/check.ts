@@ -1,14 +1,14 @@
 // Self-check of solver + plan. Run: npx tsx scripts/check.ts
 import assert from 'node:assert/strict';
-import { buildings, extractors, recipes } from '../src/game';
+import { buildings, extractors, mam, recipes } from '../src/game';
 import { layout } from '../src/layout';
 import { buildPlan, conveyorFor, solvePlan } from '../src/plan';
 import { buildSim, step } from '../src/sim';
-import { solve, type Settings } from '../src/solver';
+import { enabledRecipes, solve, type Settings } from '../src/solver';
 import { autoplan, fromResources } from '../src/autoplan';
 
 const base: Settings = {
-  outputs: [], inputs: [], unlimitedRaw: true, unlimitedWater: true, alts: [],
+  outputs: [], inputs: [], unlimitedRaw: true, unlimitedWater: true, alts: mam.map((m) => m.id), // every MAM research done
   buildings: [...Object.keys(buildings), ...Object.keys(extractors)],
   beltMk: [1, 2, 3, 4, 5, 6], pipeMk: [1, 2],
   weights: { resources: 1, power: 0, buildings: 0 },
@@ -255,7 +255,7 @@ await assert.rejects(solve({ ...base, outputs: [{ item: 'Desc_IronPlate_C', rate
 
 // 5) heavy chain solves and every recipe group is fed
 {
-  const s = { ...base, alts: recipes.filter((r) => r.alt).map((r) => r.id), outputs: [{ item: id('ModularFrameHeavy'), rate: 10, maximize: false }] };
+  const s = { ...base, alts: [...base.alts, ...recipes.filter((r) => r.alt).map((r) => r.id)], outputs: [{ item: id('ModularFrameHeavy'), rate: 10, maximize: false }] };
   const p = buildPlan(await solve(s), s);
   for (const g of p.groups.filter((g) => g.kind === 'recipe')) {
     for (const f of g.inputs) {
@@ -311,7 +311,7 @@ console.log('all checks passed');
 // autoplanner: several distinct ways, the recommended one mines the fewest kinds, and a factory limited to its
 // recipes makes the product with exactly those resources
 {
-  const s: Settings = { ...base, alts: recipes.filter((r) => r.alt).map((r) => r.id) };
+  const s: Settings = { ...base, alts: [...base.alts, ...recipes.filter((r) => r.alt).map((r) => r.id)] };
   const list = await autoplan([{ item: 'Desc_ModularFrameHeavy_C', rate: 10 }], s);
   assert.ok(list.length >= 3, `${list.length} options`);
   assert.ok(list[0].tags.includes('Recommended'));
@@ -379,4 +379,17 @@ console.log('all checks passed');
   const p = await solvePlan(s);
   assert.ok(!p.warnings.length, p.warnings.join(' | '));
   console.log('power from resources ok', mw.rate.toFixed(0), 'MW from oil');
+}
+
+// unlocks as in the game: hard drives unlock one alternate (+ its side recipes), MAM research its recipes
+{
+  const has = (alts: string[], id: string) => enabledRecipes({ ...base, alts }).some((r) => r.id === id);
+  const alt = new Set(recipes.filter((r) => r.alt).map((r) => r.id));
+  assert.ok(!alt.has('Recipe_PackagedTurboFuel_C') && !alt.has('Recipe_UnpackageTurboFuel_C'), 'packaging is no hard drive of its own');
+  assert.ok(alt.has('Recipe_PureAluminumIngot_C') && alt.size === 107, `${alt.size} alternates`);
+  assert.ok(!has([], 'Recipe_Alternate_EnrichedCoal_C') && has(['Research_Sulfur_CompactedCoal_C'], 'Recipe_Alternate_EnrichedCoal_C'), 'compacted coal is MAM research');
+  assert.ok(!has([], 'Recipe_Quickwire_C') && has(['Research_Caterium_2_C'], 'Recipe_Quickwire_C'), 'quickwire is MAM research');
+  assert.ok(has(['Recipe_Alternate_TurboBlendFuel_C'], 'Recipe_PackagedTurboFuel_C'), 'Turbo Blend Fuel hard drive brings packaging');
+  assert.ok(has([], 'Recipe_IngotIron_C'), 'milestone recipes are always there');
+  console.log('unlocks ok');
 }

@@ -11,7 +11,7 @@ export type Settings = {
   inputs: Input[];
   unlimitedRaw: boolean;
   unlimitedWater: boolean;
-  alts: string[]; // enabled alternate recipe ids
+  alts: string[]; // unlocked hard drives (alternate recipe ids) and MAM research ids
   buildings: string[]; // enabled production buildings + extractors
   beltMk: number[]; // enabled belt tiers
   pipeMk: number[];
@@ -73,7 +73,7 @@ export const enabledRecipes = (s: Settings) => {
   const alts = new Set(s.alts);
   const out = new Set(s.exclude ?? []);
   const only = s.only && new Set(s.only);
-  return recipes.filter((r) => on.has(r.building) && (!r.alt || alts.has(r.id)) && !out.has(r.id) && (!only || only.has(r.id) || buildings[r.building]?.generates));
+  return recipes.filter((r) => on.has(r.building) && (!r.need || r.need.some((k) => alts.has(k))) && !out.has(r.id) && (!only || only.has(r.id) || buildings[r.building]?.generates));
 };
 
 const recipePower = (r: Recipe) => r.power ?? buildings[r.building].power;
