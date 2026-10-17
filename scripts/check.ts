@@ -410,3 +410,19 @@ console.log('all checks passed');
   }
   console.log('surplus use ok');
 }
+
+// power plant from limited oil + coal: leftover resin stays a leftover (it used to be turned into plastic just to
+// have fewer items left over), and a factory can leave out the coal generators
+{
+  const m = (extractor: string, item: string, purity: 'impure' | 'normal' | 'pure', count: number, clock: number) => ({ kind: 'miner' as const, extractor, item, purity, count, clock });
+  const s: Settings = {
+    ...base, alts: [...base.alts, ...recipes.filter((r) => r.alt).map((r) => r.id)], unlimitedRaw: false, outputs: [{ item: 'MW', rate: 1, maximize: true }],
+    inputs: [m('Build_MinerMk2_C', 'Desc_Coal_C', 'pure', 1, 2), m('Build_MinerMk2_C', 'Desc_Coal_C', 'normal', 1, 2.5), m('Build_OilPump_C', 'Desc_LiquidOil_C', 'pure', 3, 2.5), m('Build_OilPump_C', 'Desc_LiquidOil_C', 'normal', 2, 2.5), m('Build_MinerMk2_C', 'Desc_Sulfur_C', 'pure', 1, 2)],
+  };
+  const p = await solvePlan(s);
+  assert.ok(!p.groups.some((g) => g.kind === 'recipe' && g.outputs.some((f) => f.item === 'Desc_Plastic_C')), 'no plastic made from leftover resin');
+  assert.ok(p.groups.some((g) => g.building === 'Build_GeneratorCoal_C'), 'coal generators by default');
+  const p2 = await solvePlan({ ...s, off: recipes.filter((r) => r.building === 'Build_GeneratorCoal_C').map((r) => r.id) });
+  assert.ok(!p2.groups.some((g) => g.building === 'Build_GeneratorCoal_C') && p2.generated > 0, 'coal generators left out');
+  console.log('power plant choice ok');
+}

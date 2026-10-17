@@ -26,6 +26,7 @@ export type Settings = {
   extraPower?: number; // internal: MW drawn by things outside the LP (sink), added when self-powered
   exclude?: string[]; // internal: recipe ids left out (trace amounts dropped by solveClean)
   only?: string[]; // recipes this factory is limited to (chosen in the autoplanner); power plants stay free
+  off?: string[]; // recipes this factory must not use (e.g. power plants it shouldn't build)
 };
 
 export type Solution = {
@@ -71,7 +72,7 @@ export function availability(s: Settings) {
 export const enabledRecipes = (s: Settings) => {
   const on = new Set(s.buildings);
   const alts = new Set(s.alts);
-  const out = new Set(s.exclude ?? []);
+  const out = new Set([...(s.exclude ?? []), ...(s.off ?? [])]);
   const only = s.only && new Set(s.only);
   return recipes.filter((r) => on.has(r.building) && (!r.need || r.need.some((k) => alts.has(k))) && !out.has(r.id) && (!only || only.has(r.id) || buildings[r.building]?.generates));
 };
@@ -144,8 +145,9 @@ export async function solve(s: Settings): Promise<Solution> {
       if (a !== Infinity) bounds.push(`0 <= i${k} <= ${a}`);
       cost.push(`+ ${(w.resources + eps) * importWeight(id)} i${k}`);
     }
-    // tiny surplus penalty keeps the solver from overproducing for free
-    cost.push(`+ ${eps} s${k}`);
+    // tiny surplus penalty keeps the solver from overproducing for free; far below one machine's cost, so it never
+    // pays to build machines that only turn a leftover into fewer items (e.g. resin into plastic)
+    cost.push(`+ ${eps * 1e-4} s${k}`);
   });
   rs.forEach((r, i) => cost.push(`+ ${w.power * recipePower(r) + (w.buildings + eps)} r${i}`));
   // MW per 1/min taken from an input: extractors placed by the plan (miners from the inputs, water extractors)

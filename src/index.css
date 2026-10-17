@@ -109,6 +109,9 @@ main { position: relative; display: flex; flex-direction: column; min-width: 0; 
 .modal header { display: flex; align-items: center; justify-content: space-between; margin-bottom: 8px; font-size: 15px; }
 .modal .seg button { display: inline-flex; align-items: center; gap: 4px; }
 .modal .made { max-height: none; }
+h3.sub { font-size: 12px; margin: 10px 0 4px; color: var(--muted); text-transform: uppercase; letter-spacing: 0.03em; }
+.plants { display: flex; flex-direction: column; gap: 2px; }
+.plants .chk { display: flex; align-items: center; gap: 5px; }
 .fit { position: absolute; right: 12px; top: 12px; display: flex; gap: 6px; }
 .app.full { grid-template-columns: 1fr; }
 .app.full aside, .app.full .toolbar { display: none; }

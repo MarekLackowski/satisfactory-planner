@@ -13,6 +13,7 @@ export type Factory = {
   overclock?: number; // max clock for production machines (1..2.5)
   shards?: number; // power shards set aside for this factory's machines
   only?: string[]; // recipes picked in the autoplanner
+  off?: string[]; // recipes (power plants) this factory doesn't use
   dir: Dir;
   moved: Record<string, Pt>;
   updated: number;

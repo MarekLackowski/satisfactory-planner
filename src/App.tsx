@@ -84,7 +84,7 @@ export default function App() {
     const s0 = load();
     const f0 = loadFactories({ outputs: s0.outputs, inputs: s0.inputs });
     const a = f0.list.find((x) => x.id === f0.active);
-    return { s: { ...s0, outputs: a?.outputs ?? [], inputs: a?.inputs ?? [], powerBudget: a?.powerBudget, selfPowered: a?.selfPowered, overclock: a?.overclock ?? 1, shards: a?.shards ?? 0, only: a?.only }, f: f0 };
+    return { s: { ...s0, outputs: a?.outputs ?? [], inputs: a?.inputs ?? [], powerBudget: a?.powerBudget, selfPowered: a?.selfPowered, overclock: a?.overclock ?? 1, shards: a?.shards ?? 0, only: a?.only, off: a?.off }, f: f0 };
   });
   const [s, setS] = useState<Settings>(init.s);
   const set = (patch: Partial<Settings>) => setS((p) => ({ ...p, ...patch }));
@@ -144,20 +144,20 @@ export default function App() {
   // ---- factories: the active one is the live editor state (autosaved); unlocks/options live in `s` and are shared
   const current = useMemo<Factories>(() => ({
     ...fac,
-    list: fac.list.map((x) => (x.id === fac.active ? { ...x, outputs: s.outputs, inputs: s.inputs, powerBudget: s.powerBudget, selfPowered: s.selfPowered, overclock: s.overclock, shards: s.shards, only: s.only, dir, moved } : x)),
-  }), [fac, s.outputs, s.inputs, s.powerBudget, s.selfPowered, s.overclock, s.shards, s.only, dir, moved]);
+    list: fac.list.map((x) => (x.id === fac.active ? { ...x, outputs: s.outputs, inputs: s.inputs, powerBudget: s.powerBudget, selfPowered: s.selfPowered, overclock: s.overclock, shards: s.shards, only: s.only, off: s.off, dir, moved } : x)),
+  }), [fac, s.outputs, s.inputs, s.powerBudget, s.selfPowered, s.overclock, s.shards, s.only, s.off, dir, moved]);
   useEffect(() => saveFactories(current), [current]);
   const patchActive = (patch: Partial<Factory>) =>
     setFac((f) => ({ ...f, list: f.list.map((x) => (x.id === f.active ? { ...x, ...patch, updated: Date.now() } : x)) }));
   const open = (x: Factory) => {
     setFac({ list: current.list, active: x.id });
-    setS((p) => ({ ...p, outputs: x.outputs, inputs: x.inputs, powerBudget: x.powerBudget, selfPowered: x.selfPowered, overclock: x.overclock ?? 1, shards: x.shards ?? 0, only: x.only }));
+    setS((p) => ({ ...p, outputs: x.outputs, inputs: x.inputs, powerBudget: x.powerBudget, selfPowered: x.selfPowered, overclock: x.overclock ?? 1, shards: x.shards ?? 0, only: x.only, off: x.off }));
     setDir(x.dir);
     setMoved(x.moved);
   };
   const addFactory = (x: Factory) => {
     setFac({ list: [...current.list, x], active: x.id });
-    setS((p) => ({ ...p, outputs: x.outputs, inputs: x.inputs, powerBudget: x.powerBudget, selfPowered: x.selfPowered, overclock: x.overclock ?? 1, shards: x.shards ?? 0, only: x.only }));
+    setS((p) => ({ ...p, outputs: x.outputs, inputs: x.inputs, powerBudget: x.powerBudget, selfPowered: x.selfPowered, overclock: x.overclock ?? 1, shards: x.shards ?? 0, only: x.only, off: x.off }));
     setDir(x.dir);
     setMoved(x.moved);
     setTab('factories');
@@ -167,7 +167,7 @@ export default function App() {
     const rest = current.list.filter((x) => x.id !== id);
     if (!rest.length) {
       setFac({ list: [], active: '' });
-      setS((p) => ({ ...p, outputs: [], inputs: [], only: undefined }));
+      setS((p) => ({ ...p, outputs: [], inputs: [], only: undefined, off: undefined }));
       setMoved({});
       return setTab('factories');
     }
@@ -207,6 +207,9 @@ export default function App() {
   const maxCount = s.outputs.filter((o) => o.maximize).length;
   const inputItems = useMemo(() => [...rawItems, ...Object.keys(items).filter((i) => !items[i].raw && i !== POWER).sort((a, b) => nameOf(a).localeCompare(nameOf(b)))], []);
   const generatorsOn = s.buildings.some((b) => buildings[b]?.generates);
+  // power plants (generator + fuel) the unlocks allow, so this factory can leave some out
+  const plants = useMemo(() => enabledRecipes({ ...s, only: undefined, off: undefined }).filter((r) => buildings[r.building]?.generates), [s.buildings, s.alts]); // eslint-disable-line react-hooks/exhaustive-deps
+  const plansPower = s.selfPowered || s.outputs.some((o) => o.item === POWER);
   const enabledExtractors = Object.values(extractors).filter((e) => s.buildings.includes(e.id));
   // only items the unlocked recipes/buildings can make
   const makeable = useMemo(() => {
@@ -307,6 +310,25 @@ export default function App() {
                 </>
               )}
               <p className="hint">To plan a power plant on its own, add <b>Power</b> as an output (in MW).</p>
+              {plansPower && plants.length > 0 && (
+                <>
+                  <h3 className="sub">Power plants to use</h3>
+                  <div className="plants">
+                    {plants.map((r) => (
+                      <label key={r.id} className="chk" title={r.name}>
+                        <input type="checkbox" checked={!s.off?.includes(r.id)} onChange={(e) => {
+                          const off = toggle(s.off ?? [], r.id, !e.target.checked);
+                          set({ off: off.length ? off : undefined });
+                        }} />
+                        <Icon src={icon(nameOf(r.building))} size={20} />
+                        <Icon src={itemIcon(r.inputs[0]?.item ?? POWER)} size={20} />
+                        {nameOf(r.building).replace(/ Generator$|-Powered Generator$/, '')} · {r.inputs.filter((f) => f.item !== 'Desc_Water_C').map((f) => nameOf(f.item)).join(' + ') || 'heat'}
+                        {r.inputs.some((f) => f.item === 'Desc_Water_C') && <small className="unit"> + water</small>}
+                      </label>
+                    ))}
+                  </div>
+                </>
+              )}
             </section>
 
             <section>
@@ -487,7 +509,7 @@ export default function App() {
         )}
         <footer>
           <div className="row">
-            <button onClick={() => { if (confirm('Reset unlocks and options? Factories are kept.')) setS((p) => ({ ...DEFAULTS, outputs: p.outputs, inputs: p.inputs, powerBudget: p.powerBudget, selfPowered: p.selfPowered, overclock: p.overclock, shards: p.shards, only: p.only })); }}>Reset unlocks & options</button>
+            <button onClick={() => { if (confirm('Reset unlocks and options? Factories are kept.')) setS((p) => ({ ...DEFAULTS, outputs: p.outputs, inputs: p.inputs, powerBudget: p.powerBudget, selfPowered: p.selfPowered, overclock: p.overclock, shards: p.shards, only: p.only, off: p.off })); }}>Reset unlocks & options</button>
             <a className="kofi" href="https://ko-fi.com/mareklackowski" target="_blank" rel="noopener noreferrer">☕ Buy me a coffee</a>
           </div>
           <p className="legal">
