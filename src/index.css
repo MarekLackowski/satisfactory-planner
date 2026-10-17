@@ -104,6 +104,11 @@ main { position: relative; display: flex; flex-direction: column; min-width: 0; 
 .wiring .flow { animation: wiring-flow 0.8s linear infinite; }
 @keyframes wiring-flow { to { stroke-dashoffset: -14; } }
 @media (prefers-reduced-motion: reduce) { .wiring .mover { display: none; } .wiring .flow { animation: none; } }
+.modal-backdrop { position: fixed; inset: 0; z-index: 100; background: rgba(0, 0, 0, 0.45); display: flex; align-items: center; justify-content: center; padding: 16px; }
+.modal { width: min(480px, 100%); max-height: 85vh; overflow: auto; background: var(--panel); border: 1px solid var(--line); border-radius: 8px; padding: 12px 14px; box-shadow: 0 12px 40px rgba(0, 0, 0, 0.4); }
+.modal header { display: flex; align-items: center; justify-content: space-between; margin-bottom: 8px; font-size: 15px; }
+.modal .seg button { display: inline-flex; align-items: center; gap: 4px; }
+.modal .made { max-height: none; }
 .fit { position: absolute; right: 12px; top: 12px; display: flex; gap: 6px; }
 .app.full { grid-template-columns: 1fr; }
 .app.full aside, .app.full .toolbar { display: none; }

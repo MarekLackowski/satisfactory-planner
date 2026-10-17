@@ -393,3 +393,20 @@ console.log('all checks passed');
   assert.ok(has([], 'Recipe_IngotIron_C'), 'milestone recipes are always there');
   console.log('unlocks ok');
 }
+
+// leftovers put to use: 10/min Heavy Oil Residue from plastic can become power, fuel or coke; picking one adds an
+// output made from it and nothing is left over
+{
+  const s: Settings = { ...base, outputs: [{ item: 'Desc_Plastic_C', rate: 20, maximize: false }] };
+  const p = await solvePlan(s);
+  const left = p.groups.find((g) => g.id === 'surplus')!.inputs;
+  assert.equal(left[0].item, 'Desc_HeavyOilResidue_C');
+  const opts = await fromResources(left, s, undefined, true);
+  for (const id of ['MW', 'Desc_LiquidFuel_C', 'Desc_PetroleumCoke_C']) assert.ok(opts.some((m) => m.item === id), `${id} from residue`);
+  for (const m of opts.filter((x) => ['MW', 'Desc_PetroleumCoke_C'].includes(x.item))) {
+    const p2 = await solvePlan({ ...s, outputs: [...s.outputs, { item: m.item, rate: Math.floor(m.rate * 100) / 100, maximize: false }] });
+    const rest = p2.groups.find((g) => g.id === 'surplus')?.inputs.reduce((a, f) => a + f.rate, 0) ?? 0;
+    assert.equal(rest, 0, `${m.item}: ${rest}/min still left`);
+  }
+  console.log('surplus use ok');
+}

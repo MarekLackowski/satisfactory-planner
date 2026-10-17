@@ -100,7 +100,7 @@ export type Made = { item: string; rate: number; uses: string[]; recipes: string
  * everything the given inputs (plus water) can be turned into with the unlocked recipes, each at the most it can
  * make on its own; the ones using more of the inputs first, then the most advanced (by AWESOME Sink value)
  */
-export async function fromResources(inputs: { item: string; rate: number }[], s: Settings, progress?: (done: number, total: number) => void): Promise<Made[]> {
+export async function fromResources(inputs: { item: string; rate: number }[], s: Settings, progress?: (done: number, total: number) => void, grossPower = false): Promise<Made[]> {
   const usable = enabledRecipes({ ...s, only: undefined });
   const have = new Set([...inputs.map((i) => i.item), WATER]);
   // which items are reachable at all: grow the set until no recipe adds anything
@@ -124,8 +124,8 @@ export async function fromResources(inputs: { item: string; rate: number }[], s:
     progress?.(k, candidates.length);
     try {
       const outputs: Output[] = [{ item, rate: 1, maximize: true }];
-      // power: net of what the refineries etc. on the way use themselves
-      const sol = await solveClean({ ...base, outputs, selfPowered: item === POWER });
+      // power: net of what the refineries etc. on the way use themselves (gross when they run off the grid)
+      const sol = await solveClean({ ...base, outputs, selfPowered: item === POWER && !grossPower });
       const rate = sol.produced.get(item) ?? 0;
       if (rate < 0.01) continue;
       made.push({

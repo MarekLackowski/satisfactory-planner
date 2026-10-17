@@ -210,8 +210,9 @@ export function buildPlan(sol: Solution, s: Settings): Plan {
   for (const [item, rate] of sol.produced) {
     groups.push({ id: `out_${item}`, kind: 'output', label: `Output: ${nameOf(item)}`, machines: [], lines: [], inputs: [{ item, rate }], outputs: [], power: 0 });
   }
-  const solidSurplus = [...sol.surplus].filter(([i]) => !items[i].fluid && i !== POWER);
-  const fluidSurplus = [...sol.surplus].filter(([i]) => items[i].fluid);
+  // under 0.01/min is rounding (e.g. an output set a hair under its maximum), not a real leftover
+  const solidSurplus = [...sol.surplus].filter(([i, r]) => !items[i].fluid && i !== POWER && r >= 0.01);
+  const fluidSurplus = [...sol.surplus].filter(([i, r]) => items[i].fluid && r >= 0.01);
   if (solidSurplus.length && s.sinkSurplus) {
     groups.push({ id: 'sink', kind: 'sink', label: 'AWESOME Sink', machines: [], lines: [], inputs: solidSurplus.map(([item, rate]) => ({ item, rate })), outputs: [], power: 30 * Math.max(1, Math.ceil(solidSurplus.reduce((a, [, r]) => a + r, 0) / maxConveyor(false, s).rate - EPS)) }); // one sink per belt of surplus
   }

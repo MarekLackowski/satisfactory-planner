@@ -94,6 +94,9 @@ const lineLen = (g: Group, L: number) => g.inputs.length * L + MW + g.outputs.le
 const titleStart = (g: Group, dir: Dir, L: number) => (dir === 'TB' && g.lines.length && g.inputs.length ? PAD + g.inputs.length * L + 2 : 8);
 const titleWidth = (g: Group, dir: Dir, L: number) => titleStart(g, dir, L) + 24 + titleOf(g).length * TITLE_CHAR + 10;
 
+/** groups holding leftovers: tapping them offers what else they can become (one more line says so) */
+export const LEFTOVER = new Set(['surplus', 'sink']);
+
 function size(g: Group, dir: Dir, s: Settings) {
   const L = lane(g, s);
   const tw = titleWidth(g, dir, L);
@@ -103,7 +106,7 @@ function size(g: Group, dir: Dir, s: Settings) {
     const flows = [...g.inputs, ...g.outputs, ...(g.generates ? [{ item: 'MW', rate: g.generates }] : [])];
     const info = Math.max(0, ...flows.map((x) => `${x.rate.toFixed(1)}/min ${items[x.item].name}`.length)) * NOTE_CHAR + 20;
     const w = Math.max(170, tw, info);
-    const h = Math.max(64, 44 + flows.length * INFO_LINE);
+    const h = Math.max(64, 44 + (flows.length + (LEFTOVER.has(g.id) ? 1 : 0)) * INFO_LINE);
     return dir === 'TB' ? { width: Math.max(w, ports), height: h } : { width: w, height: Math.max(h, HEAD + ports) };
   }
   const maxM = Math.max(...g.lines.map((l) => l.machines.length));

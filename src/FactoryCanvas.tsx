@@ -3,7 +3,7 @@ import { amount, buildings, extractors, fmt, icon, itemIcon, items, nameOf, TIER
 import { buildSim, step, type Sim } from './sim';
 import WiringDiagram from './WiringDiagram';
 import type { Wiring } from './wiring';
-import { LANE_GAP, titleOf, type Layout, type NodeBox, type Path, type Pt, type Segment } from './layout';
+import { LANE_GAP, LEFTOVER, titleOf, type Layout, type NodeBox, type Path, type Pt, type Segment } from './layout';
 
 const imgCache = new Map<string, HTMLImageElement>();
 function img(src: string) {
@@ -111,13 +111,14 @@ type Props = {
   fitKey: unknown; // view refits when this changes (new plan / direction), not while dragging
   refit: number; // ... or when this counter goes up (auto-arrange, fullscreen)
   children?: React.ReactNode; // buttons in the top-right corner
+  onNodeClick?: (id: string) => void; // a group tapped without dragging it
   onMoveNode: (id: string, p: Pt) => void;
   playing: boolean;
   speed: number;
   colorBy: ColorBy;
 };
 
-export default function FactoryCanvas({ layout, fitKey, refit, onMoveNode, playing, speed, colorBy, children }: Props) {
+export default function FactoryCanvas({ layout, fitKey, refit, onMoveNode, playing, speed, colorBy, children, onNodeClick }: Props) {
   const ref = useRef<HTMLCanvasElement>(null);
   const view = useRef({ x: 0, y: 0, k: 1 });
   const time = useRef(0);
@@ -172,6 +173,11 @@ export default function FactoryCanvas({ layout, fitKey, refit, onMoveNode, playi
         [...g.inputs, ...g.outputs].forEach((x, i) =>
           ctx.fillText(amount(x.item, x.rate), n.x + 10, n.y + 44 + i * INFO_LINE, n.w - 20));
         if (g.generates) ctx.fillText(`⚡ ${fmt(g.generates)} MW`, n.x + 10, n.y + 44 + (g.inputs.length + g.outputs.length) * INFO_LINE, n.w - 20);
+        if (LEFTOVER.has(g.id)) {
+          ctx.fillStyle = col('--accent');
+          ctx.font = '600 11px system-ui, sans-serif';
+          ctx.fillText('▸ Click to put it to use', n.x + 10, n.y + 44 + (g.inputs.length + g.outputs.length) * INFO_LINE, n.w - 20);
+        }
       }
       for (const m of n.machines) {
         ctx.fillStyle = col('--machine');
@@ -396,7 +402,12 @@ export default function FactoryCanvas({ layout, fitKey, refit, onMoveNode, playi
     const wy = (sy - y) / k;
     view.current = { k: k2, x: tx - wx * k2, y: ty - wy * k2 };
   };
+  const press = useRef<{ id: string; x: number; y: number } | null>(null);
   const release = (e: React.PointerEvent) => {
+    // a tap on a group (not a drag) opens what it offers, e.g. using the surplus
+    const t = press.current;
+    if (t && e.type === 'pointerup' && Math.hypot(e.clientX - t.x, e.clientY - t.y) < 5) onNodeClick?.(t.id);
+    press.current = null;
     pointers.current.delete(e.pointerId);
     if (pointers.current.size < 2) pinch.current = null;
     drag.current = null;
@@ -473,6 +484,7 @@ export default function FactoryCanvas({ layout, fitKey, refit, onMoveNode, playi
         ...g.outputs.map((f) => `out: ${amount(f.item, f.rate)}`),
         ...(g.power ? [`Power: ${fmt(g.power)} MW`] : []),
         ...(g.note ? [g.note] : []),
+        ...(LEFTOVER.has(g.id) ? ['Click to put it to use'] : []),
       ],
     });
   };
@@ -498,6 +510,7 @@ export default function FactoryCanvas({ layout, fitKey, refit, onMoveNode, playi
           const n = nodeAt(p);
           if (n) grab.current = { id: n.group.id, dx: p.x - n.x, dy: p.y - n.y };
           else drag.current = { x: e.clientX, y: e.clientY };
+          press.current = n ? { id: n.group.id, x: e.clientX, y: e.clientY } : null;
           setTip(null);
         }}
         onPointerUp={release}

@@ -2,13 +2,14 @@ import { useEffect, useMemo, useRef, useState } from 'react';
 import FactoriesPanel from './Factories';
 import { loadFactories, newFactory, saveFactories, type Factories, type Factory } from './storage';
 import FactoryCanvas from './FactoryCanvas';
+import SurplusPanel from './Surplus';
 import WiringDiagram from './WiringDiagram';
 import { Icon, ItemSelect } from './ui';
 import Autoplanner from './Autoplanner';
 import {
   POWER, unit, TIER_COLORS, type ColorBy, belts, buildings, extractors, fmt, icon, itemIcon, items, nameOf, mam, pipes, producible, rawItems, recipeById, recipes, WATER_PUMP, type Purity,
 } from './game';
-import { autoArrange, geometry, type Dir, type Pt } from './layout';
+import { autoArrange, geometry, LEFTOVER, type Dir, type Pt } from './layout';
 import { solvePlan, type Plan } from './plan';
 import { enabledRecipes, minerCap, minerRate, type Input, type Settings } from './solver';
 
@@ -108,6 +109,7 @@ export default function App() {
   const [dir, setDir] = useState<Dir>(active?.dir ?? 'TB');
   const [moved, setMoved] = useState<Record<string, Pt>>(active?.moved ?? {});
   const [refit, setRefit] = useState(0);
+  const [leftover, setLeftover] = useState<{ item: string; rate: number }[] | null>(null); // surplus picked to use
   // the side panel and the summary can be resized by dragging their edge (double-click resets)
   const [asideW, setAsideW] = useSize('satisfactory-aside-width');
   const [summaryH, setSummaryH] = useSize('satisfactory-summary-height');
@@ -540,12 +542,24 @@ export default function App() {
         {result && 'error' in result && <div className="error">{result.error}</div>}
         {lay && (
           <FactoryCanvas layout={lay} fitKey={arranged} refit={refit} playing={playing} speed={speed} colorBy={colorBy}
-            onMoveNode={(id, p) => setMoved((m) => ({ ...m, [id]: p }))}>
+            onMoveNode={(id, p) => setMoved((m) => ({ ...m, [id]: p }))}
+            onNodeClick={(id) => {
+              const g = plan?.groups.find((x) => x.id === id);
+              if (g && LEFTOVER.has(id) && g.inputs.length) setLeftover(g.inputs);
+            }}>
             {full && plan && <button onClick={() => setHideSummary(!hideSummary)}>{hideSummary ? '▴ Show summary' : '▾ Hide summary'}</button>}
             <button onClick={toggleFull} title={full ? 'Back to the planner (Esc)' : 'Show the factory on the whole screen'}>{full ? '✕ Exit fullscreen' : '⛶ Fullscreen'}</button>
           </FactoryCanvas>
         )}
         {result && 'info' in result && <div className="info">{result.info}</div>}
+        {leftover && (
+          <SurplusPanel s={s} left={leftover} onClose={() => setLeftover(null)}
+            onUse={(m, rate) => {
+              // a new output made from the leftover; a factory limited to picked recipes gets the ones it needs
+              set({ outputs: [...s.outputs, { item: m.item, rate, maximize: false }], only: s.only && [...new Set([...s.only, ...m.recipes])] });
+              setLeftover(null);
+            }} />
+        )}
         {plan && !(full && hideSummary) && (
           <div className="resize-y" role="separator" aria-orientation="horizontal" aria-label="Resize the summary" title="Drag to resize · double-click to reset"
             onDoubleClick={() => setSummaryH(null)}
