@@ -322,7 +322,7 @@ export default function App() {
                         }} />
                         <Icon src={icon(nameOf(r.building))} size={20} />
                         <Icon src={itemIcon(r.inputs[0]?.item ?? POWER)} size={20} />
-                        {nameOf(r.building).replace(/ Generator$|-Powered Generator$/, '')} · {r.inputs.filter((f) => f.item !== 'Desc_Water_C').map((f) => nameOf(f.item)).join(' + ') || 'heat'}
+                        {nameOf(r.building).replace(/ Generator$/, '')}: {r.inputs.filter((f) => f.item !== 'Desc_Water_C').map((f) => nameOf(f.item)).join(' + ') || 'heat'}
                         {r.inputs.some((f) => f.item === 'Desc_Water_C') && <small className="unit"> + water</small>}
                       </label>
                     ))}
